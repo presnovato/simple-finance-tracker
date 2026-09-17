@@ -1,0 +1,58 @@
+# Переменные окружения
+.env
+.env.*
+!.env.example
+
+# Секреты и локальные credentials
+secrets/
+*.secret
+*.pem
+*.key
+*.p12
+
+# База данных (локальные слепки)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+*.dump
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Внутренние документы
+docs/
+backlog/
+
+# Инструменты
+.claude/
+.railway/
+settings.local.json
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Graphify (локальный генерируемый артефакт)
+graphify-out/
+
+# Сборка
+build/
+dist/
+node_modules/
+*.tsbuildinfo
+!tma/dist/
+!tma/dist/**
+*.egg-info/

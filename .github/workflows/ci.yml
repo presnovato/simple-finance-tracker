@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check finance_bot tests tools
+      - run: python -m coverage run -m pytest -q
+      - run: python -m coverage report
+
+  tma:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tma
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tma/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

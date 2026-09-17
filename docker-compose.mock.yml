@@ -1,0 +1,61 @@
+services:
+  mock-db:
+    build:
+      context: .
+      dockerfile: docker/mock/Dockerfile
+    image: finance-tracker-mock:local
+    environment:
+      BOT_TOKEN: "000000000:mock-token"
+      ALLOWED_USER_ID: "123456789"
+      OPENROUTER_API_KEY: mock
+      DB_PATH: /data/finance.db
+      DB_REQUIRE_PERSISTENT_DIR: "0"
+      MOCK_RESET: "${MOCK_RESET:-0}"
+    volumes:
+      - finance_tracker_mock_db:/data
+    command:
+      - sh
+      - -c
+      - python tools/seed_mock_database.py && exec tail -f /dev/null
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /data/.mock-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  tma:
+    build:
+      context: .
+      dockerfile: docker/mock/Dockerfile
+    image: finance-tracker-mock:local
+    depends_on:
+      mock-db:
+        condition: service_healthy
+    environment:
+      BOT_TOKEN: "000000000:mock-token"
+      ALLOWED_USER_ID: "123456789"
+      OPENROUTER_API_KEY: mock
+      DB_PATH: /data/finance.db
+      DB_REQUIRE_PERSISTENT_DIR: "0"
+      TMA_URL: "http://localhost:${MOCK_TMA_PORT:-8080}"
+      PORT: "8080"
+      TIMEZONE: Europe/Moscow
+    volumes:
+      - finance_tracker_mock_db:/data
+    ports:
+      - "${MOCK_TMA_PORT:-8080}:8080"
+    command: ["python", "tools/mock_tma_server.py"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  finance_tracker_mock_db:
