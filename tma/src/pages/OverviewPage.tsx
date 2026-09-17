@@ -42,6 +42,7 @@ import {
   shiftMonth,
   todayMonth,
 } from '../format'
+import { chartSeriesLabel } from '../chart'
 import type {
   BudgetResponse,
   BudgetSettings,
@@ -260,9 +261,9 @@ export function OverviewPage({ openHistory }: Props) {
                 cursor={{ fill: 'rgba(119, 230, 182, .08)' }}
                 contentStyle={{ background: '#171a22', border: '1px solid #2d3240', borderRadius: 12 }}
                 labelFormatter={(label) => formatDayLabel(String(label))}
-                formatter={(value, name) => [
+                formatter={(value, _name, item) => [
                   formatMoney(String(value)),
-                  name === 'expenseValue' ? 'Расход' : 'Доход',
+                  chartSeriesLabel(item.dataKey),
                 ]}
               />
               <ReferenceLine y={Number(summary.average_daily)} stroke="#ffca6a" strokeDasharray="5 5" />
