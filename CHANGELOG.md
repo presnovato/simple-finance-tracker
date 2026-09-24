@@ -6,7 +6,8 @@
 
 - Внутренняя структура без изменения поведения: `database/connection.py`
   разделён на `schema.py`, `migrations.py` и `connection.py`;
-  `database/queries.py` и `api/routes.py` стали пакетами по доменам, а
+  `database/queries.py`, `api/routes.py` и `api/schemas.py` стали пакетами по
+  доменам, а
   `tma/src/pages/DebtsPage.tsx` — набором компонентов в
   `tma/src/pages/debts/`. Публичные пути импорта, схема БД и интерфейс
   сохранены.
