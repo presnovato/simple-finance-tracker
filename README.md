@@ -4,7 +4,7 @@ Owner-only Telegram-бот и Telegram Mini App для личного учёта
 Данные хранятся в SQLite, а интерфейс TMA объединяет обзор, историю, долги,
 криптоактивы и подписки.
 
-**Статус:** 1.0.0 — Stable Release
+**Статус:** 1.1.0
 **Лицензия:** [MIT](LICENSE)
 
 ## Возможности
@@ -44,6 +44,12 @@ python -m finance_bot.main
 Для локального SQLite в `.env` удобно указать `DB_PATH=./finance.db` и
 `DB_REQUIRE_PERSISTENT_DIR=0`. `OPENROUTER_API_KEY` нужен только для AI-захвата;
 ручной сценарий `/manual` от него не зависит.
+
+> ⚠️ Не запускай локальную копию с production-токеном. Два поллера на одном
+> токене конфликтуют (`TelegramConflictError`), и апдейты случайно делятся
+> между ними. Заведи отдельного dev-бота в @BotFather, используй его токен и
+> локальный `DB_PATH`. В логе при старте видно, к какому боту подключился
+> процесс: `Бот @<username> (id=<id>) запущен`.
 
 Основные команды Telegram-бота:
 
@@ -102,6 +108,56 @@ docker compose -f docker-compose.mock.yml up --build
 
 Затем открой [http://localhost:8080](http://localhost:8080). Это development-only
 профиль с отключённой авторизацией; не публикуй его наружу.
+
+Гарантии mock-профиля:
+
+- порт публикуется только на `127.0.0.1` — с других машин в сети он недоступен;
+- оба контейнера запускаются с `FINANCE_TRACKER_MOCK=1`, а
+  `tools/mock_tma_server.py` и `tools/seed_mock_database.py` откажутся работать
+  без этой переменной, при наличии переменных Railway или с настоящим
+  `BOT_TOKEN`;
+- сервер раздаёт только базу, помеченную `settings.mock_database=1`, а
+  `MOCK_RESET=1` не удалит файл без этой метки;
+- внутри контейнера сервер слушает `MOCK_BIND_HOST=0.0.0.0` (нужно для
+  проброса порта Docker), локально по умолчанию — `127.0.0.1`.
+
+> ⚠️ Никогда не запускай скрипты из `tools/` с production-`.env`: mock-инструменты
+> работают только с отдельной mock-базой.
+
+## Резервные копии и восстановление
+
+Каждую ночь (по умолчанию в `BACKUP_HOUR=4` по `TIMEZONE`) бот присылает в чат
+владельца сжатый файл `finance_backup_ГГГГ-ММ-ДД.db.gz` с полной копией базы.
+Если база не менялась с прошлой отправки, файл не отправляется — вместо этого
+обновляется отметка `backup_last_checked_at`. Если бот был выключен в момент
+запуска задачи, пропущенный бэкап догоняется примерно через минуту после старта.
+Перед каждой новой миграцией схемы рядом с базой сохраняется снимок
+`<db_dir>/backups/pre-migration-v<N>-<UTC>.db` (хранятся три последних).
+
+### Локальное восстановление
+
+```bash
+gunzip finance_backup_2026-09-24.db.gz
+sqlite3 finance.db "PRAGMA integrity_check"   # должно вывести ok
+DB_PATH=./finance.db DB_REQUIRE_PERSISTENT_DIR=0 python -m finance_bot.main
+```
+
+### Восстановление на Railway
+
+Файл можно положить на Volume через Railway CLI (`railway volume files`).
+Останови сервис перед заменой базы, чтобы не было двух писателей и лишнего WAL:
+
+```bash
+gunzip finance_backup_2026-09-24.db.gz
+sqlite3 finance.db "PRAGMA integrity_check"
+railway volume files --volume <volume> list /
+railway volume files --volume <volume> upload ./finance.db /finance.db --overwrite
+```
+
+Если в списке остались `finance.db-wal` или `finance.db-shm` от старой базы,
+удали их через `railway volume browse /` (или `railway volume files delete`),
+затем запусти сервис заново. После старта проверь `/health` и что в «Истории»
+видны последние операции.
 
 ## Документация и участие
 

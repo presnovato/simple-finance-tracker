@@ -3,6 +3,7 @@ import logging
 import re
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -30,6 +31,9 @@ CREATE TABLE IF NOT EXISTS operations (
   needs_review  INTEGER NOT NULL DEFAULT 0,
   tg_message_id INTEGER,
   subscription_id INTEGER REFERENCES subscriptions(id),
+  source_chat_id    INTEGER,
+  source_message_id INTEGER,
+  source_item_index INTEGER,
   deleted_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_operations_op_date  ON operations (op_date);
@@ -37,6 +41,27 @@ CREATE INDEX IF NOT EXISTS idx_operations_category ON operations (category);
 CREATE INDEX IF NOT EXISTS idx_operations_tg_msg   ON operations (tg_message_id);
 CREATE INDEX IF NOT EXISTS idx_operations_active_date
   ON operations (op_date DESC, id DESC) WHERE deleted_at IS NULL;
+-- NULL-значения в SQLite различны, поэтому ручные/TMA/старые записи не
+-- конфликтуют между собой; уникальность действует только для источника.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_source
+  ON operations (source_chat_id, source_message_id, source_item_index);
+
+-- Повторно присланные файлы (file_unique_id стабилен при пересылке).
+CREATE TABLE IF NOT EXISTS capture_files (
+  file_unique_id TEXT PRIMARY KEY,
+  first_seen_at  TEXT NOT NULL
+                 DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now')),
+  operation_ids  TEXT
+);
+
+-- Идемпотентность POST /api/operations по заголовку Idempotency-Key.
+CREATE TABLE IF NOT EXISTS api_idempotency (
+  key           TEXT PRIMARY KEY,
+  created_at    TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now')),
+  status        INTEGER,
+  response_json TEXT
+);
 
 -- Кредиты и рассрочки
 CREATE TABLE IF NOT EXISTS debts (
@@ -596,6 +621,41 @@ async def _migrate_nullable_weekly_budget_limits(
     )
 
 
+async def _migrate_source_idempotency(conn: aiosqlite.Connection) -> None:
+    """Идемпотентность источника: колонки, уникальный индекс и новые таблицы."""
+    for column, ddl in (
+        ("source_chat_id", "source_chat_id INTEGER"),
+        ("source_message_id", "source_message_id INTEGER"),
+        ("source_item_index", "source_item_index INTEGER"),
+    ):
+        await _ensure_column(conn, "operations", column, ddl)
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_source "
+        "ON operations (source_chat_id, source_message_id, source_item_index)"
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capture_files (
+          file_unique_id TEXT PRIMARY KEY,
+          first_seen_at  TEXT NOT NULL
+                         DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now')),
+          operation_ids  TEXT
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_idempotency (
+          key           TEXT PRIMARY KEY,
+          created_at    TEXT NOT NULL
+                        DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now')),
+          status        INTEGER,
+          response_json TEXT
+        )
+        """
+    )
+
+
 _MIGRATIONS = (
     (1, "legacy_columns", _migrate_legacy_columns),
     (2, "indexes_after_columns", _migrate_indexes),
@@ -605,10 +665,45 @@ _MIGRATIONS = (
     (6, "weekly_budget", _migrate_weekly_budget),
     (7, "nullable_weekly_budget_limits", _migrate_nullable_weekly_budget_limits),
     (8, "manual_capture_sessions", _migrate_manual_capture_sessions),
+    (9, "source_idempotency", _migrate_source_idempotency),
 )
 
+# True, если текущий init_pool() создал файл базы с нуля (Volume не найден,
+# путь сменился и т.п.). Используется для предупреждения владельцу в main.py.
+created_fresh: bool = False
 
-async def _run_migrations(conn: aiosqlite.Connection) -> None:
+
+def _prune_pre_migration_snapshots(backups_dir: Path, *, keep: int) -> None:
+    snapshots = sorted(
+        backups_dir.glob("pre-migration-*.db"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    for stale in snapshots[:-keep]:
+        stale.unlink(missing_ok=True)
+
+
+async def _snapshot_before_migration(
+    conn: aiosqlite.Connection, db_path: Path, version: int
+) -> None:
+    """Локальный снимок БД перед применением первой ожидающей миграции."""
+    backups_dir = db_path.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = backups_dir / f"pre-migration-v{version}-{timestamp}.db"
+    destination = sqlite3.connect(target)
+    try:
+        await conn.backup(destination)
+    finally:
+        destination.close()
+    logger.info("Снимок перед миграцией %d: %s", version, target)
+    _prune_pre_migration_snapshots(backups_dir, keep=3)
+
+
+async def _run_migrations(
+    conn: aiosqlite.Connection,
+    db_path: Path | None = None,
+    had_data: bool = False,
+) -> None:
     await conn.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -634,6 +729,12 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
             "База данных требует более новой версии приложения: "
             f"миграции {unknown_versions}"
         )
+
+    pending = [entry for entry in _MIGRATIONS if entry[0] not in applied]
+    if pending and had_data and db_path is not None:
+        # Снимок до первой ожидающей миграции: сбойную миграцию можно
+        # откатить вручную из <db_dir>/backups.
+        await _snapshot_before_migration(conn, db_path, pending[0][0])
 
     for version, name, migration in _MIGRATIONS:
         if version in applied:
@@ -661,7 +762,7 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
 
 
 async def init_pool() -> SQLiteAdapter:
-    global _pool
+    global _pool, created_fresh
 
     if sqlite3.sqlite_version_info < (3, 35):
         version = sqlite3.sqlite_version
@@ -679,6 +780,7 @@ async def init_pool() -> SQLiteAdapter:
 
     existed = db_path.is_file()
     size = db_path.stat().st_size if existed else 0
+    created_fresh = not existed
     connection = await aiosqlite.connect(db_path)
     try:
         connection.row_factory = aiosqlite.Row
@@ -690,7 +792,9 @@ async def init_pool() -> SQLiteAdapter:
             "icontains", 2, _icontains, deterministic=True
         )
         await connection.executescript(BASE_SCHEMA)
-        await _run_migrations(connection)
+        await _run_migrations(
+            connection, db_path, had_data=existed and size > 0
+        )
         await connection.commit()
     except BaseException:
         await connection.close()

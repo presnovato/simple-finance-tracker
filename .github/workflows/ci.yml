@@ -24,6 +24,19 @@ jobs:
       - run: python -m coverage run -m pytest -q
       - run: python -m coverage report
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # gitleaks-action@v2 работает на Node 20, который GitHub выводит из
+      # эксплуатации; v3 — актуальная версия. Для личного аккаунта лицензия
+      # GITLEAKS_LICENSE не требуется.
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   tma:
     runs-on: ubuntu-latest
     defaults:
@@ -40,3 +53,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: tma/dist is fresh
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- tma/dist)" ]; then
+            echo 'tma/dist is stale: run "npm run build" in tma/ and commit tma/dist together with the sources'
+            git status -- tma/dist
+            exit 1
+          fi

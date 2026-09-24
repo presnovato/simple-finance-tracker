@@ -11,6 +11,7 @@ services:
       DB_PATH: /data/finance.db
       DB_REQUIRE_PERSISTENT_DIR: "0"
       MOCK_RESET: "${MOCK_RESET:-0}"
+      FINANCE_TRACKER_MOCK: "1"
     volumes:
       - finance_tracker_mock_db:/data
     command:
@@ -40,10 +41,12 @@ services:
       TMA_URL: "http://localhost:${MOCK_TMA_PORT:-8080}"
       PORT: "8080"
       TIMEZONE: Europe/Moscow
+      FINANCE_TRACKER_MOCK: "1"
+      MOCK_BIND_HOST: "0.0.0.0"
     volumes:
       - finance_tracker_mock_db:/data
     ports:
-      - "${MOCK_TMA_PORT:-8080}:8080"
+      - "127.0.0.1:${MOCK_TMA_PORT:-8080}:8080"
     command: ["python", "tools/mock_tma_server.py"]
     healthcheck:
       test:

@@ -282,8 +282,8 @@ async def test_soft_delete_excludes_and_restore_returns_operation(
         "transfer_in": Decimal("0.00"),
         "transfer_out": Decimal("0.00"),
     }
-    assert await queries.find_duplicate(
-        date(2026, 7, 26), Decimal("540"), "расход"
+    assert await queries.find_possible_duplicates(
+        date(2026, 7, 26), Decimal("540"), "расход", "Продукты"
     ) is None
 
     restored = await queries.restore_operation(op_id)
@@ -1039,6 +1039,7 @@ async def test_schema_migration_history_is_recorded(sqlite_database):
         {"version": 6, "name": "weekly_budget"},
         {"version": 7, "name": "nullable_weekly_budget_limits"},
         {"version": 8, "name": "manual_capture_sessions"},
+        {"version": 9, "name": "source_idempotency"},
     ]
 
 

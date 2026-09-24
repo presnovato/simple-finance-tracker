@@ -5,14 +5,22 @@
 """
 
 import logging
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
-from finance_bot.config import ALLOWED_USER_ID, DEFAULT_REMINDER_TIME, plural_ru
+from finance_bot.config import (
+    ALLOWED_USER_ID,
+    BACKUP_ENABLED,
+    BACKUP_HOUR,
+    DAY_BOUNDARY_HOUR,
+    DEFAULT_REMINDER_TIME,
+    plural_ru,
+)
 from finance_bot.core.dashboard import fmt_amount
 from finance_bot.core.dates import TZ, effective_today
 from finance_bot.core.subscriptions import (
@@ -20,12 +28,20 @@ from finance_bot.core.subscriptions import (
     format_subscription_amount,
 )
 from finance_bot.database import queries
+from finance_bot.services import backup as backup_service
 from finance_bot.services import budget as budget_service
 from finance_bot.webapp import web_app_markup
 
 logger = logging.getLogger(__name__)
 
 JOB_ID = "evening_ping"
+RETRY_JOB_ID = "evening_ping_retry"
+CATCH_UP_JOB_ID = "evening_ping_catch_up"
+BACKUP_JOB_ID = "daily_backup"
+BACKUP_CATCH_UP_JOB_ID = "daily_backup_catch_up"
+EVENING_MARKER_SETTING = "evening_ping_last_date"
+RETRY_DELAY_MINUTES = 10
+CATCH_UP_DELAY_SECONDS = 30
 _scheduler: AsyncIOScheduler | None = None
 
 
@@ -157,7 +173,26 @@ async def build_evening_message() -> tuple[str, InlineKeyboardMarkup | None]:
     return "\n".join(lines), _due_keyboard(due)
 
 
-async def _send_evening_ping(bot: Bot) -> None:
+def scheduled_moment(
+    hour: int, minute: int, effective_day: date
+) -> datetime:
+    """Момент, когда должен уйти пинг за финансовый день ``effective_day``.
+
+    Время до ``DAY_BOUNDARY_HOUR`` относится к следующему календарному дню:
+    `/remind 01:30` в ночь на 25-е — это пинг за финансовый день 24-го,
+    поэтому для effective_day=24-е момент — 25-е, 01:30.
+    """
+    calendar_day = effective_day
+    if hour < DAY_BOUNDARY_HOUR:
+        calendar_day = effective_day + timedelta(days=1)
+    return TZ.localize(datetime.combine(calendar_day, time(hour, minute)))
+
+
+async def _send_evening_ping(bot: Bot, *, is_retry: bool = False) -> None:
+    today = effective_today()
+    if await queries.get_setting(EVENING_MARKER_SETTING) == today.isoformat():
+        logger.info("Вечерний пинг пропущен: за %s уже отправлен", today)
+        return
     try:
         text, subscription_markup = await build_evening_message()
         await bot.send_message(
@@ -167,6 +202,129 @@ async def _send_evening_ping(bot: Bot) -> None:
         )
     except Exception:
         logger.exception("Вечерний пинг не отправился")
+        if is_retry:
+            logger.error(
+                "Повторный вечерний пинг за %s не удался, ждём следующий день",
+                today,
+            )
+        else:
+            _schedule_evening_retry(bot)
+        return
+    await queries.set_setting(EVENING_MARKER_SETTING, today.isoformat())
+    logger.info("Вечерний пинг отправлен за %s", today)
+
+
+def _schedule_evening_retry(bot: Bot) -> None:
+    if _scheduler is None:
+        return
+
+    async def retry_job() -> None:
+        await _send_evening_ping(bot, is_retry=True)
+
+    _scheduler.add_job(
+        retry_job,
+        DateTrigger(run_date=_utcnow() + timedelta(minutes=RETRY_DELAY_MINUTES)),
+        id=RETRY_JOB_ID,
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
+    logger.info(
+        "Вечерний пинг: запланирован один повтор через %d минут",
+        RETRY_DELAY_MINUTES,
+    )
+
+
+async def schedule_evening_catch_up(bot: Bot) -> bool:
+    """Догоняющий запуск, если пинг за текущий финансовый день пропущен.
+
+    Родственник ``schedule_catch_up_if_overdue``, но с семантикой «дата»:
+    сравнивается не возраст отметки, а наступил ли уже момент напоминания
+    для текущего финансового дня. Возвращает, было ли добавлено задание.
+    """
+    if _scheduler is None:
+        return False
+    time_str = await queries.get_setting("reminder_time") or DEFAULT_REMINDER_TIME
+    hour, minute = parse_hhmm(time_str) or parse_hhmm(DEFAULT_REMINDER_TIME)
+    today = effective_today()
+    moment = scheduled_moment(hour, minute, today)
+    now = _utcnow().astimezone(TZ)
+    if now < moment:
+        return False
+    if await queries.get_setting(EVENING_MARKER_SETTING) == today.isoformat():
+        logger.info("Догоняющий пинг не нужен: за %s уже отправлен", today)
+        return False
+
+    async def catch_up_job() -> None:
+        await _send_evening_ping(bot)
+
+    _scheduler.add_job(
+        catch_up_job,
+        DateTrigger(
+            run_date=_utcnow() + timedelta(seconds=CATCH_UP_DELAY_SECONDS)
+        ),
+        id=CATCH_UP_JOB_ID,
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
+    logger.info(
+        "Вечерний пинг: запланирован догоняющий запуск за %s", today
+    )
+    return True
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+async def schedule_catch_up_if_overdue(
+    job_id: str,
+    func,
+    *,
+    last_run_key: str,
+    max_age: timedelta,
+    delay_seconds: int = 60,
+) -> bool:
+    """Разовый догоняющий запуск, если прошлый прогон пропущен.
+
+    Не блокирует старт: только добавляет задание через ``delay_seconds``.
+    Возвращает, было ли задание добавлено.
+    """
+    if _scheduler is None:
+        return False
+    last_run = _parse_utc(await queries.get_setting(last_run_key))
+    moment = _utcnow()
+    if last_run is not None and moment - last_run < max_age:
+        return False
+    run_at = moment + timedelta(seconds=delay_seconds)
+    _scheduler.add_job(
+        func,
+        DateTrigger(run_date=run_at),
+        id=job_id,
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
+    logger.info(
+        "Запланирован догоняющий запуск %s на %s", job_id, run_at.isoformat()
+    )
+    return True
 
 
 async def setup(bot: Bot) -> AsyncIOScheduler:
@@ -177,10 +335,38 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
     _scheduler.add_job(
         _send_evening_ping, CronTrigger(hour=hour, minute=minute, timezone=TZ),
         args=[bot], id=JOB_ID,
+        misfire_grace_time=3600, coalesce=True, max_instances=1,
     )
+
+    async def backup_job() -> None:
+        await backup_service.send_daily_backup(bot)
+
+    if BACKUP_ENABLED:
+        _scheduler.add_job(
+            backup_job,
+            CronTrigger(hour=BACKUP_HOUR, minute=0, timezone=TZ),
+            id=BACKUP_JOB_ID,
+            misfire_grace_time=3600,
+            coalesce=True,
+            max_instances=1,
+        )
+
     _scheduler.start()
     logger.info("Вечерний пинг назначен на %02d:%02d", hour, minute)
+
+    if BACKUP_ENABLED:
+        await schedule_catch_up_if_overdue(
+            BACKUP_CATCH_UP_JOB_ID,
+            backup_job,
+            last_run_key=backup_service.LAST_AT_SETTING,
+            max_age=timedelta(hours=26),
+        )
+    await schedule_evening_catch_up(bot)
     return _scheduler
+
+
+def is_running() -> bool:
+    return _scheduler is not None and _scheduler.running
 
 
 def reschedule(hour: int, minute: int) -> None:

@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from finance_bot.api import server
 from finance_bot.api.server import create_app
 
 
@@ -12,16 +13,71 @@ class AllowAuthenticator:
         return {"id": 1}
 
 
+async def _db_ok() -> bool:
+    return True
+
+
+async def _db_fail() -> bool:
+    return False
+
+
 async def test_health_is_public_and_api_requires_init_data():
     client = TestClient(TestServer(create_app()))
     await client.start_server()
     try:
         health = await client.get("/health")
-        assert health.status == 200
-        assert await health.json() == {"status": "ok"}
+        assert health.status in (200, 503)
+        assert "status" in await health.json()
 
         protected = await client.get("/api/categories")
         assert protected.status == 401
+    finally:
+        await client.close()
+
+
+async def test_health_ok_with_working_db_and_running_scheduler(monkeypatch):
+    monkeypatch.setattr(server, "_database_ok", _db_ok)
+    monkeypatch.setattr(server.scheduler, "is_running", lambda: True)
+    client = TestClient(TestServer(create_app(AllowAuthenticator())))
+    await client.start_server()
+    try:
+        response = await client.get("/health")
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["status"] == "ok"
+        assert payload["db"] is True
+        assert payload["scheduler"] is True
+        assert payload["polling_last_ok"] is None
+        assert "version" in payload
+    finally:
+        await client.close()
+
+
+async def test_health_degraded_when_database_check_fails(monkeypatch):
+    monkeypatch.setattr(server, "_database_ok", _db_fail)
+    monkeypatch.setattr(server.scheduler, "is_running", lambda: True)
+    client = TestClient(TestServer(create_app(AllowAuthenticator())))
+    await client.start_server()
+    try:
+        response = await client.get("/health")
+        assert response.status == 503
+        payload = await response.json()
+        assert payload["status"] == "degraded"
+        assert payload["db"] is False
+    finally:
+        await client.close()
+
+
+async def test_health_degraded_when_scheduler_not_running(monkeypatch):
+    monkeypatch.setattr(server, "_database_ok", _db_ok)
+    monkeypatch.setattr(server.scheduler, "is_running", lambda: False)
+    client = TestClient(TestServer(create_app(AllowAuthenticator())))
+    await client.start_server()
+    try:
+        response = await client.get("/health")
+        assert response.status == 503
+        payload = await response.json()
+        assert payload["scheduler"] is False
     finally:
         await client.close()
 

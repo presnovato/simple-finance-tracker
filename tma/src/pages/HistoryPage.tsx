@@ -16,7 +16,8 @@ import {
   TKTextarea,
 } from 'tg-mini-app-uikit'
 
-import { api, createOperation, queryString } from '../api'
+import { api, createOperation, queryString, submissionKey } from '../api'
+import type { SubmissionKey } from '../api'
 import { formatDay, formatMoney } from '../format'
 import {
   buildOperationCreatePayload,
@@ -533,6 +534,7 @@ function OperationEditor({ operation, categories, onSaved, onConfirm, onDelete }
   const [form, setForm] = useState(initialForm)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const lastCreate = useRef<SubmissionKey | null>(null)
   const categoryOptions = form.type === 'доход' ? categories.income : categories.expense
 
   const submit = async () => {
@@ -555,7 +557,9 @@ function OperationEditor({ operation, categories, onSaved, onConfirm, onDelete }
         baseline.current = form
         onSaved()
       } else {
-        await createOperation(buildOperationCreatePayload(form))
+        const payload = buildOperationCreatePayload(form)
+        lastCreate.current = submissionKey(lastCreate.current, payload)
+        await createOperation(payload, lastCreate.current.key)
         onSaved()
       }
       haptic('medium')

@@ -6,7 +6,8 @@ import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from finance_bot.config import EXPENSE_CATEGORIES, INCOME_CATEGORIES, OPERATION_TYPES
+from finance_bot.config import (EXPENSE_CATEGORIES, INCOME_CATEGORIES,
+                                MAX_ABS_AMOUNT, OPERATION_TYPES)
 from finance_bot.core.budget import week_bounds
 
 
@@ -21,7 +22,7 @@ def money(value: object) -> Decimal:
         amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError) as exc:
         raise ValidationError("некорректная сумма") from exc
-    if amount <= 0 or amount >= Decimal("10000000000"):
+    if amount <= 0 or amount >= MAX_ABS_AMOUNT:
         raise ValidationError("сумма вне допустимого диапазона")
     return amount
 
@@ -33,7 +34,7 @@ def nonnegative_money(value: object, field: str = "balance") -> Decimal:
         amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError) as exc:
         raise ValidationError(f"некорректное поле {field}") from exc
-    if amount < 0 or amount >= Decimal("10000000000"):
+    if amount < 0 or amount >= MAX_ABS_AMOUNT:
         raise ValidationError(f"{field} вне допустимого диапазона")
     return amount
 
@@ -45,7 +46,7 @@ def signed_money(value: object, field: str = "amount") -> Decimal:
         amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError) as exc:
         raise ValidationError(f"некорректное поле {field}") from exc
-    if not amount.is_finite() or abs(amount) >= Decimal("10000000000"):
+    if not amount.is_finite() or abs(amount) >= MAX_ABS_AMOUNT:
         raise ValidationError(f"{field} вне допустимого диапазона")
     return amount
 

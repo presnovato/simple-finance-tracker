@@ -12,9 +12,20 @@ from datetime import date
 
 import httpx
 
+from aiogram import Bot
+
 from finance_bot.config import (
-    EXPENSE_CATEGORIES, FALLBACK_MODEL, INCOME_CATEGORIES, LLM_TIMEOUT_SECONDS,
-    OPENROUTER_API_KEY, OPENROUTER_URL, PRIMARY_MODEL,
+    ALLOWED_USER_ID,
+    EXPENSE_CATEGORIES,
+    FALLBACK_MODEL,
+    INCOME_CATEGORIES,
+    LLM_CONNECT_TIMEOUT_SECONDS,
+    LLM_DENY_DATA_COLLECTION,
+    LLM_MODELS_URL,
+    LLM_TIMEOUT_SECONDS,
+    OPENROUTER_API_KEY,
+    OPENROUTER_URL,
+    PRIMARY_MODEL,
 )
 from finance_bot.core.debts import (may_contain_debt_intent,
                                     parse_debt_intent_response)
@@ -22,6 +33,52 @@ from finance_bot.core.parsing import (FALLBACK, parse_llm_response,
                                       parse_llm_response_many)
 
 logger = logging.getLogger(__name__)
+
+
+class LLMUnavailable(Exception):
+    """OpenRouter недоступен: сеть, таймаут или HTTP-ошибка провайдера."""
+
+    def __init__(self, reason: str, *, status: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
+
+
+def _status_reason(status: int) -> str:
+    if status == 401:
+        return "ключ недействителен"
+    if status == 402:
+        return "закончились кредиты"
+    if status == 403:
+        return "доступ запрещён"
+    if status == 404:
+        return "модель недоступна"
+    if status == 429:
+        return "слишком много запросов"
+    if status >= 500:
+        return "сервис OpenRouter недоступен"
+    return f"HTTP {status}"
+
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                LLM_TIMEOUT_SECONDS, connect=LLM_CONNECT_TIMEOUT_SECONDS
+            )
+        )
+    return _http_client
+
+
+async def close_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 MCC_MAP = """Жильё: 4900, 6513
 Продукты: 5411, 5499
@@ -144,20 +201,48 @@ JSON-объект без пояснений:
   needs_review=true, но выбирай самый вероятный intent."""
 
 
+def _provider_preferences() -> dict:
+    if not LLM_DENY_DATA_COLLECTION:
+        return {}
+    # Исключаем провайдеров, которые хранят данные или обучаются на них.
+    return {"data_collection": "deny"}
+
+
 async def _call(model: str, messages: list, plugins: list | None = None) -> str:
     payload: dict = {"model": model, "messages": messages}
     if plugins:
         payload["plugins"] = plugins
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
+    provider = _provider_preferences()
+    if provider:
+        payload["provider"] = provider
+    try:
+        resp = await _client().post(
             OPENROUTER_URL,
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
             json=payload,
         )
-        if resp.status_code >= 400:
-            logger.error("OpenRouter %s: %s", resp.status_code, resp.text[:500])
-        resp.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise LLMUnavailable("таймаут") from exc
+    except httpx.HTTPError as exc:
+        raise LLMUnavailable("сеть недоступна") from exc
+    if resp.status_code >= 400:
+        body = resp.text[:500]
+        logger.error("OpenRouter %s: %s", resp.status_code, body)
+        lowered = body.lower()
+        if "data policy" in lowered or "no endpoints" in lowered:
+            logger.error(
+                "У модели нет провайдеров без сбора данных; "
+                "при необходимости ослабь LLM_DENY_DATA_COLLECTION"
+            )
+        raise LLMUnavailable(
+            _status_reason(resp.status_code), status=resp.status_code
+        )
+    try:
         return resp.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        # Ответ 200 с неожиданной структурой — ошибка разбора, а не сбой сети.
+        logger.warning("OpenRouter вернул ответ 200 неизвестной структуры")
+        return ""
 
 
 def _messages(prompt: str, user_content) -> list:
@@ -165,32 +250,63 @@ def _messages(prompt: str, user_content) -> list:
             {"role": "user", "content": user_content}]
 
 
-async def _extract(user_content, today: date, plugins: list | None = None) -> dict:
-    """Primary → fallback-модель; полный провал → FALLBACK-запись."""
-    if not is_available():
-        return dict(FALLBACK, date=today)
-    prompt = build_extract_prompt(today)
+async def _try_models(prompt: str, user_content, plugins: list | None = None):
+    """Primary → fallback. Возвращает (текст|None, причины недоступности)."""
+    reasons: list[LLMUnavailable] = []
     for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
             raw = await _call(model, _messages(prompt, user_content), plugins)
-            return parse_llm_response(raw, default_date=today)
+            return raw, reasons
+        except LLMUnavailable as exc:
+            reasons.append(exc)
+            logger.warning("LLM %s недоступна: %s", model, exc.reason)
         except Exception:
             logger.exception("LLM %s не ответила", model)
-    return dict(FALLBACK, date=today)
+    return None, reasons
+
+
+def _pick_reason(reasons: list[LLMUnavailable]) -> LLMUnavailable:
+    for reason in reasons:
+        if reason.status in (401, 402):
+            return reason
+    return reasons[0]
+
+
+async def _extract(user_content, today: date, plugins: list | None = None) -> dict:
+    """Primary → fallback; сбой разбора → FALLBACK, недоступность → исключение."""
+    if not is_available():
+        return dict(FALLBACK, date=today)
+    prompt = build_extract_prompt(today)
+    raw, reasons = await _try_models(prompt, user_content, plugins)
+    if raw is None:
+        if reasons:
+            raise _pick_reason(reasons)
+        return dict(FALLBACK, date=today)
+    return parse_llm_response(raw, default_date=today)
 
 
 async def _extract_many(user_content, today: date) -> list[dict]:
     if not is_available():
         return []
     prompt = build_extract_many_prompt(today)
+    reasons: list[LLMUnavailable] = []
+    responded = False
     for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
             raw = await _call(model, _messages(prompt, user_content))
-            parsed = parse_llm_response_many(raw, default_date=today)
-            if parsed:
-                return parsed
+        except LLMUnavailable as exc:
+            reasons.append(exc)
+            logger.warning("Мульти-разбор %s недоступен: %s", model, exc.reason)
+            continue
         except Exception:
             logger.exception("Мульти-разбор через %s не удался", model)
+            continue
+        responded = True
+        parsed = parse_llm_response_many(raw, default_date=today)
+        if parsed:
+            return parsed
+    if not responded and reasons:
+        raise _pick_reason(reasons)
     return []
 
 
@@ -203,6 +319,10 @@ async def extract_debt_intent(text: str, today: date) -> dict:
         try:
             raw = await _call(model, _messages(prompt, text))
             return parse_debt_intent_response(raw, today)
+        except LLMUnavailable as exc:
+            logger.warning(
+                "Классификатор долгов %s недоступен: %s", model, exc.reason
+            )
         except Exception:
             logger.exception("Классификатор долгов через %s не ответил", model)
     return parse_debt_intent_response("", today)
@@ -232,6 +352,8 @@ async def extract_many_from_pdf(
     uri = f"data:application/pdf;base64,{base64.b64encode(data).decode()}"
     content = [{"type": "file", "file": {"filename": filename, "file_data": uri}}]
     prompt = build_extract_many_prompt(today)
+    reasons: list[LLMUnavailable] = []
+    responded = False
     for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
             raw = await _call(
@@ -239,11 +361,19 @@ async def extract_many_from_pdf(
                 _messages(prompt, content),
                 [{"id": "file-parser", "pdf": {"engine": "mistral-ocr"}}],
             )
-            parsed = parse_llm_response_many(raw, default_date=today)
-            if parsed:
-                return parsed
+        except LLMUnavailable as exc:
+            reasons.append(exc)
+            logger.warning("Мульти-разбор PDF %s недоступен: %s", model, exc.reason)
+            continue
         except Exception:
             logger.exception("Мульти-разбор PDF через %s не удался", model)
+            continue
+        responded = True
+        parsed = parse_llm_response_many(raw, default_date=today)
+        if parsed:
+            return parsed
+    if not responded and reasons:
+        raise _pick_reason(reasons)
     return []
 
 
@@ -254,14 +384,22 @@ async def extract_from_pdf(data: bytes, filename: str, today: date) -> dict:
     content = [{"type": "file", "file": {"filename": filename, "file_data": uri}}]
     prompt = build_extract_prompt(today)
     # mistral-ocr рендерит PDF для модели; native был нужен только Gemini
+    reasons: list[LLMUnavailable] = []
     for model, engine in ((PRIMARY_MODEL, "mistral-ocr"),
                           (FALLBACK_MODEL, "mistral-ocr")):
         plugins = [{"id": "file-parser", "pdf": {"engine": engine}}]
         try:
             raw = await _call(model, _messages(prompt, content), plugins)
-            return parse_llm_response(raw, default_date=today)
+        except LLMUnavailable as exc:
+            reasons.append(exc)
+            logger.warning("PDF %s/%s недоступен: %s", model, engine, exc.reason)
+            continue
         except Exception:
             logger.exception("PDF через %s/%s не разобрался", model, engine)
+            continue
+        return parse_llm_response(raw, default_date=today)
+    if reasons:
+        raise _pick_reason(reasons)
     return dict(FALLBACK, date=today)
 
 
@@ -281,10 +419,61 @@ async def correct_operation(
         context=(context or "нет")[:4000],
         instruction=instruction,
     )
+    reasons: list[LLMUnavailable] = []
     for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
             raw = await _call(model, [{"role": "user", "content": prompt}])
-            return parse_llm_response(raw, default_date=today)
+        except LLMUnavailable as exc:
+            reasons.append(exc)
+            logger.warning("Правка через %s недоступна: %s", model, exc.reason)
+            continue
         except Exception:
             logger.exception("Правка через %s не удалась", model)
+            continue
+        return parse_llm_response(raw, default_date=today)
+    if reasons:
+        raise _pick_reason(reasons)
     return dict(FALLBACK, date=today)
+
+
+async def check_models_available(bot: Bot) -> list[str]:
+    """Сверяет PRIMARY/FALLBACK с каталогом OpenRouter (фоновая проверка).
+
+    Сетевой сбой проверки — только WARNING. Отсутствующая модель → ERROR и одно
+    сообщение владельцу с именем переменной. Возвращает список отсутствующих.
+    """
+    if not is_available():
+        return []
+    try:
+        response = await _client().get(LLM_MODELS_URL)
+        response.raise_for_status()
+        catalog = {
+            item.get("id") for item in response.json().get("data", [])
+        }
+    except Exception:
+        logger.warning("Не удалось получить список моделей OpenRouter")
+        return []
+
+    missing = [
+        name
+        for name in (PRIMARY_MODEL, FALLBACK_MODEL)
+        if name not in catalog
+    ]
+    if not missing:
+        return []
+    for name in missing:
+        logger.error(
+            "Модель %s отсутствует в каталоге OpenRouter — "
+            "проверь PRIMARY_MODEL/FALLBACK_MODEL",
+            name,
+        )
+    try:
+        await bot.send_message(
+            ALLOWED_USER_ID,
+            "⚠️ OpenRouter: модель недоступна — "
+            + ", ".join(missing)
+            + ". Проверь переменные PRIMARY_MODEL / FALLBACK_MODEL.",
+        )
+    except Exception:
+        logger.exception("Не удалось сообщить о недоступной модели")
+    return missing

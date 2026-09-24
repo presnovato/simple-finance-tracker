@@ -21,6 +21,19 @@ router = Router()
 DELETE_WORDS = {"удали", "удалить", "убери", "delete", "del"}
 
 
+async def _correct(message: Message, record: dict, context: str | None):
+    """Правка через LLM; недоступность ИИ не роняет хендлер."""
+    try:
+        return await llm.correct_operation(
+            record, message.text, effective_today(), context=context
+        )
+    except llm.LLMUnavailable as error:
+        await message.reply(
+            capture.LLM_UNAVAILABLE_TEXT.format(reason=error.reason)
+        )
+        return None
+
+
 @router.message(F.text, F.reply_to_message, F.reply_to_message.from_user.is_bot)
 async def on_correction(message: Message) -> None:
     reply = message.reply_to_message
@@ -36,12 +49,13 @@ async def on_correction(message: Message) -> None:
             await message.reply("🗑 Черновик удалил, операция не записана.")
             return
 
-        corrected = await llm.correct_operation(
+        corrected = await _correct(
+            message,
             pending["draft"],
-            message.text,
-            effective_today(),
-            context=pending.get("context") or reply.text or reply.caption,
+            pending.get("context") or reply.text or reply.caption,
         )
+        if corrected is None:
+            return
         if corrected["amount"] is None or corrected["amount"] <= 0 \
                 or corrected["type"] not in ("расход", "доход", "перевод"):
             await message.reply(
@@ -62,12 +76,11 @@ async def on_correction(message: Message) -> None:
         await message.reply(f"🗑 Удалил: {op['type']} {fmt_amount(op['amount'])}.")
         return
 
-    corrected = await llm.correct_operation(
-        op,
-        message.text,
-        effective_today(),
-        context=reply.text or reply.caption,
+    corrected = await _correct(
+        message, op, reply.text or reply.caption
     )
+    if corrected is None:
+        return
     if corrected["amount"] is None or corrected["amount"] <= 0 \
             or corrected["type"] not in ("расход", "доход", "перевод"):
         sent = await message.reply(

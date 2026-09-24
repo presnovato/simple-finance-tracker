@@ -179,6 +179,13 @@ async def operations(request: web.Request) -> web.Response:
 
 
 async def create_operation(request: web.Request) -> web.Response:
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key:
+        stored = await queries.get_idempotent_response(idempotency_key)
+        if stored is not None:
+            status, payload = stored
+            return web.json_response(payload, status=status)
+
     try:
         fields = schemas.operation_create(
             await request.json(), effective_today()
@@ -196,7 +203,11 @@ async def create_operation(request: web.Request) -> web.Response:
         await budget_service.notify_after_new_expense(
             request.app.get(BUDGET_BOT_KEY), operation["op_date"]
         )
-    return web.json_response(schemas.operation_json(operation), status=201)
+    payload = schemas.operation_json(operation)
+    if idempotency_key:
+        # Повторный запрос с тем же ключом в течение 24 часов вернёт этот ответ.
+        await queries.save_idempotent_response(idempotency_key, 201, payload)
+    return web.json_response(payload, status=201)
 
 
 async def patch_operation(request: web.Request) -> web.Response:

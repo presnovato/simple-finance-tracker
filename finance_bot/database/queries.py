@@ -1,6 +1,6 @@
 import json
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Mapping
 
@@ -262,7 +262,7 @@ class DebtPaymentError(ValueError):
 
 # --- operations -----------------------------------------------------------
 
-async def insert_operation(
+async def insert_operation_once(
     op_date: date,
     type_: str,
     amount: Decimal,
@@ -273,14 +273,25 @@ async def insert_operation(
     needs_review: bool,
     transfer_direction: str | None = None,
     subscription_id: int | None = None,
-) -> int:
+    source_chat_id: int | None = None,
+    source_message_id: int | None = None,
+    source_item_index: int | None = None,
+) -> tuple[int, bool]:
+    """Идемпотентная вставка по источнику: (id, replayed).
+
+    Повторная доставка того же Telegram-апдейта не создаёт вторую строку —
+    возвращается id уже существующей операции и ``replayed=True``.
+    """
     row = await get_pool().fetchrow(
         """
         INSERT INTO operations (
           op_date, type, amount, category, comment, account,
-          transfer_direction, source, needs_review, subscription_id
+          transfer_direction, source, needs_review, subscription_id,
+          source_chat_id, source_message_id, source_item_index
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (source_chat_id, source_message_id, source_item_index)
+        DO NOTHING
         RETURNING id
         """,
         op_date.isoformat(),
@@ -293,10 +304,60 @@ async def insert_operation(
         source,
         int(needs_review),
         subscription_id,
+        source_chat_id,
+        source_message_id,
+        source_item_index,
     )
-    if row is None:
+    if row is not None:
+        return row["id"], False
+    existing = await get_pool().fetchrow(
+        """
+        SELECT id FROM operations
+        WHERE source_chat_id IS ? AND source_message_id IS ?
+          AND source_item_index IS ?
+        ORDER BY id LIMIT 1
+        """,
+        source_chat_id,
+        source_message_id,
+        source_item_index,
+    )
+    if existing is None:
         raise RuntimeError("SQLite не вернул id добавленной операции")
-    return row["id"]
+    return existing["id"], True
+
+
+async def insert_operation(
+    op_date: date,
+    type_: str,
+    amount: Decimal,
+    category: str | None,
+    comment: str | None,
+    account: str | None,
+    source: str,
+    needs_review: bool,
+    transfer_direction: str | None = None,
+    subscription_id: int | None = None,
+    source_chat_id: int | None = None,
+    source_message_id: int | None = None,
+    source_item_index: int | None = None,
+) -> int:
+    """Совместимая обёртка над ``insert_operation_once`` (только id)."""
+    operation_id, _ = await insert_operation_once(
+        op_date,
+        type_,
+        amount,
+        category,
+        comment,
+        account,
+        source,
+        needs_review,
+        transfer_direction,
+        subscription_id,
+        source_chat_id,
+        source_message_id,
+        source_item_index,
+    )
+    return operation_id
 
 
 async def set_tg_message_id(op_id: int, tg_message_id: int) -> None:
@@ -344,21 +405,103 @@ async def delete_operation(op_id: int) -> None:
     await get_pool().execute("DELETE FROM operations WHERE id = ?", op_id)
 
 
-async def find_duplicate(
-    op_date: date, amount: Decimal, type_: str
+async def find_possible_duplicates(
+    op_date: date, amount: Decimal, type_: str, category: str | None
 ) -> int | None:
+    """Кандидат в дубли: та же сумма и тип, и либо дата ±1 день за последние
+    15 минут, либо та же дата и та же категория.
+
+    Возвращает id самого свежего кандидата — UI показывает одну кнопку удаления.
+    """
+    window_start = (op_date - timedelta(days=1)).isoformat()
+    window_end = (op_date + timedelta(days=1)).isoformat()
+    recent = (
+        datetime.now(timezone.utc) - timedelta(minutes=15)
+    ).replace(microsecond=0).isoformat()
     row = await get_pool().fetchrow(
         """
         SELECT id FROM operations
-        WHERE op_date = ? AND amount = ? AND type = ?
-          AND deleted_at IS NULL
+        WHERE amount = ? AND type = ? AND deleted_at IS NULL
+          AND (
+            (op_date BETWEEN ? AND ? AND created_at >= ?)
+            OR (op_date = ? AND ? IS NOT NULL AND category IS ?)
+          )
         ORDER BY id DESC LIMIT 1
         """,
-        op_date.isoformat(),
         to_cents(amount),
         type_,
+        window_start,
+        window_end,
+        recent,
+        op_date.isoformat(),
+        category,
+        category,
     )
     return row["id"] if row else None
+
+
+# --- идемпотентность источника и API -------------------------------------
+
+async def get_capture_file(file_unique_id: str) -> dict | None:
+    row = await get_pool().fetchrow(
+        "SELECT * FROM capture_files WHERE file_unique_id = ?",
+        file_unique_id,
+    )
+    return dict(row) if row else None
+
+
+async def remember_capture_file(
+    file_unique_id: str, operation_ids: list[int] | None = None
+) -> None:
+    payload = json.dumps(operation_ids or [])
+    await get_pool().execute(
+        """
+        INSERT INTO capture_files (file_unique_id, operation_ids)
+        VALUES (?, ?)
+        ON CONFLICT (file_unique_id) DO UPDATE SET operation_ids = excluded.operation_ids
+        """,
+        file_unique_id,
+        payload,
+    )
+
+
+async def get_idempotent_response(key: str) -> tuple[int, dict] | None:
+    row = await get_pool().fetchrow(
+        "SELECT status, response_json FROM api_idempotency WHERE key = ?",
+        key,
+    )
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row["response_json"] or "{}")
+    except json.JSONDecodeError:
+        return None
+    return int(row["status"]), payload
+
+
+async def save_idempotent_response(
+    key: str, status: int, payload: dict
+) -> None:
+    await purge_expired_idempotency()
+    await get_pool().execute(
+        """
+        INSERT INTO api_idempotency (key, status, response_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO NOTHING
+        """,
+        key,
+        status,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+async def purge_expired_idempotency() -> None:
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=24)
+    ).replace(microsecond=0).isoformat()
+    await get_pool().execute(
+        "DELETE FROM api_idempotency WHERE created_at < ?", cutoff
+    )
 
 
 # --- сводки ---------------------------------------------------------------
