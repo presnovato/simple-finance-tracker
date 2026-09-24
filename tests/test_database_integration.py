@@ -1015,7 +1015,9 @@ async def test_subscription_charge_rolls_back_on_date_shift_failure(
     def fail(*_args, **_kwargs):
         raise RuntimeError("сбой сдвига")
 
-    monkeypatch.setattr(queries, "next_charge_after", fail)
+    monkeypatch.setattr(
+        "finance_bot.database.queries.subscriptions.next_charge_after", fail
+    )
     with pytest.raises(RuntimeError, match="сбой сдвига"):
         await queries.charge_subscription(created["id"], confirmed=True)
 
