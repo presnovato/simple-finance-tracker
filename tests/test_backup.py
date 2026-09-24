@@ -1,13 +1,14 @@
 import gzip
+import json
 import os
 import sqlite3
+import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from finance_bot.config import ALLOWED_USER_ID
 from finance_bot.database import connection, queries
 from finance_bot.services import backup, scheduler
 
@@ -22,6 +23,14 @@ async def sqlite_database(tmp_path, monkeypatch):
         yield tmp_path / "finance.db"
     finally:
         await connection.close_pool()
+
+
+@pytest.fixture
+def backup_dir(tmp_path, monkeypatch):
+    directory = tmp_path / "backups" / "daily"
+    monkeypatch.setattr(backup, "BACKUP_DIR", str(directory))
+    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
+    return directory
 
 
 class FakeBot:
@@ -46,6 +55,32 @@ async def _insert_expense(amount: str = "100") -> int:
         "Карта",
         "text",
         False,
+    )
+
+
+def _write_stored(
+    directory,
+    day: date,
+    *,
+    size_bytes: int = 100,
+    operations_count: int = 0,
+) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    archive = directory / f"finance_backup_{day.isoformat()}.db.gz"
+    archive.write_bytes(b"backup")
+    metadata = directory / f"finance_backup_{day.isoformat()}.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "created_at": datetime(
+                    2026, 9, day.day, 4, 0, tzinfo=timezone.utc
+                ).isoformat(),
+                "size_bytes": size_bytes,
+                "sha256": "a" * 64,
+                "operations_count": operations_count,
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -81,70 +116,58 @@ async def test_consecutive_backups_of_unchanged_database_are_identical(
     assert first.sha256 == second.sha256
 
 
-async def test_send_daily_backup_sends_document_once(sqlite_database, monkeypatch):
-    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
+async def test_daily_job_stores_archive_without_notifying(
+    sqlite_database, backup_dir
+):
+    await _insert_expense("42.50")
     bot = FakeBot()
 
-    assert await backup.send_daily_backup(bot) is True
+    stored = await backup.store_daily_backup(bot)
 
-    assert len(bot.documents) == 1
-    chat_id, document, kwargs = bot.documents[0]
-    assert chat_id == ALLOWED_USER_ID
-    assert document.filename == "finance_backup_2026-09-24.db.gz"
-    assert kwargs["disable_notification"] is True
-    assert "24.09.2026" in kwargs["caption"]
-    assert "Операций: 0" in kwargs["caption"]
-    assert "sha256:" in kwargs["caption"]
-    assert await queries.get_setting(backup.SHA_SETTING) is not None
-    assert await queries.get_setting(backup.LAST_AT_SETTING) is not None
-
-
-async def test_unchanged_database_skips_second_send(sqlite_database, monkeypatch):
-    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
-    bot = FakeBot()
-
-    assert await backup.send_daily_backup(bot) is True
-    assert await backup.send_daily_backup(bot) is False
-
-    assert len(bot.documents) == 1
-    assert await queries.get_setting(backup.CHECKED_AT_SETTING) is not None
-
-
-async def test_changed_database_sends_again(sqlite_database, monkeypatch):
-    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
-    bot = FakeBot()
-
-    assert await backup.send_daily_backup(bot) is True
-    await _insert_expense("10")
-    assert await backup.send_daily_backup(bot) is True
-
-    assert len(bot.documents) == 2
-
-
-async def test_force_ignores_unchanged_hash(sqlite_database, monkeypatch):
-    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
-    bot = FakeBot()
-
-    assert await backup.send_daily_backup(bot) is True
-    assert await backup.send_daily_backup(bot, force=True) is True
-
-    assert len(bot.documents) == 2
-
-
-async def test_oversize_archive_is_not_uploaded(sqlite_database, monkeypatch):
-    monkeypatch.setattr(backup, "effective_today", lambda: date(2026, 9, 24))
-    monkeypatch.setattr(backup, "MAX_UPLOAD_BYTES", 1)
-    bot = FakeBot()
-
-    assert await backup.send_daily_backup(bot) is False
-
+    assert stored is not None
+    assert stored.archive_path.name == "finance_backup_2026-09-24.db.gz"
+    assert stored.operations_count == 1
+    assert len(stored.sha256) == 64
     assert bot.documents == []
-    assert len(bot.messages) == 1
-    assert "45 МБ" in bot.messages[0][1]
+    assert bot.messages == []
+
+    archive = backup_dir / "finance_backup_2026-09-24.db.gz"
+    metadata = json.loads(
+        (backup_dir / "finance_backup_2026-09-24.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["operations_count"] == 1
+    assert metadata["size_bytes"] == stored.size_bytes
+    assert metadata["sha256"] == stored.sha256
+    assert await queries.get_setting(backup.LAST_AT_SETTING) is not None
+    assert await queries.get_setting("backup_last_sha256") is None
+
+    raw = gzip.decompress(archive.read_bytes())
+    restored = backup_dir / "restored.db"
+    restored.write_bytes(raw)
+    with sqlite3.connect(restored) as restored_db:
+        assert restored_db.execute(
+            "PRAGMA integrity_check"
+        ).fetchone()[0] == "ok"
 
 
-async def test_failure_notifies_owner_and_does_not_mark_success(
-    sqlite_database, monkeypatch
+async def test_second_run_same_day_overwrites(sqlite_database, backup_dir):
+    bot = FakeBot()
+    await _insert_expense("10")
+    await backup.store_daily_backup(bot)
+    await _insert_expense("20")
+
+    stored = await backup.store_daily_backup(bot)
+
+    archives = list(backup_dir.glob("finance_backup_*.db.gz"))
+    assert len(archives) == 1
+    assert stored is not None
+    assert stored.operations_count == 2
+
+
+async def test_failure_notifies_owner_and_leaves_no_archive(
+    sqlite_database, backup_dir, monkeypatch
 ):
     async def boom(_tmp_dir):
         raise RuntimeError("boom")
@@ -152,15 +175,19 @@ async def test_failure_notifies_owner_and_does_not_mark_success(
     monkeypatch.setattr(backup, "create_backup_archive", boom)
     bot = FakeBot()
 
-    assert await backup.send_daily_backup(bot) is False
+    assert await backup.store_daily_backup(bot) is None
 
     assert bot.documents == []
     assert len(bot.messages) == 1
     assert "Автобэкап не удался: RuntimeError" in bot.messages[0][1]
     assert await queries.get_setting(backup.LAST_AT_SETTING) is None
+    assert list(backup_dir.glob("finance_backup_*.db.gz")) == []
+    assert list(backup_dir.glob("finance_backup_*.json")) == []
 
 
-async def test_failure_message_error_does_not_propagate(sqlite_database, monkeypatch):
+async def test_failure_message_error_does_not_propagate(
+    sqlite_database, backup_dir, monkeypatch
+):
     async def boom(_tmp_dir):
         raise RuntimeError("boom")
 
@@ -170,7 +197,87 @@ async def test_failure_message_error_does_not_propagate(sqlite_database, monkeyp
 
     monkeypatch.setattr(backup, "create_backup_archive", boom)
 
-    assert await backup.send_daily_backup(BrokenBot()) is False
+    assert await backup.store_daily_backup(BrokenBot()) is None
+
+
+async def test_disk_guard_skips_write_and_notifies(
+    sqlite_database, backup_dir, monkeypatch
+):
+    monkeypatch.setattr(backup, "_free_disk_bytes", lambda: 0)
+    bot = FakeBot()
+
+    assert await backup.store_daily_backup(bot) is None
+
+    assert list(backup_dir.glob("finance_backup_*.db.gz")) == []
+    assert bot.documents == []
+    assert len(bot.messages) == 1
+    assert "места" in bot.messages[0][1]
+    assert await queries.get_setting(backup.LAST_AT_SETTING) is None
+
+
+async def test_retention_keeps_latest_seven_and_ignores_others(backup_dir):
+    for offset in range(10):
+        _write_stored(backup_dir, date(2026, 9, 15 + offset))
+    (backup_dir / "pre-migration-v1-20260101T000000Z.db").write_bytes(b"snap")
+    (backup_dir / "notes.txt").write_text("keep", encoding="utf-8")
+
+    removed = backup.prune_old_backups()
+
+    remaining = sorted(
+        path.name for path in backup_dir.glob("finance_backup_*.db.gz")
+    )
+    assert remaining == [
+        f"finance_backup_2026-09-{day:02d}.db.gz" for day in range(18, 25)
+    ]
+    assert len(removed) == 6
+    assert (backup_dir / "pre-migration-v1-20260101T000000Z.db").is_file()
+    assert (backup_dir / "notes.txt").is_file()
+
+
+async def test_prune_removes_only_stale_tmp_files(backup_dir):
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stale = backup_dir / "finance_backup_2026-09-24.db.gz.tmp"
+    stale.write_bytes(b"partial")
+    old = time.time() - 7200
+    os.utime(stale, (old, old))
+    fresh = backup_dir / "finance_backup_2026-09-24.json.tmp"
+    fresh.write_bytes(b"partial")
+
+    backup.prune_old_backups()
+
+    assert not stale.exists()
+    assert fresh.is_file()
+
+
+async def test_list_backups_newest_first(backup_dir):
+    for day in (20, 24, 22):
+        _write_stored(backup_dir, date(2026, 9, day))
+
+    listed = backup.list_backups()
+
+    assert [stored.date for stored in listed] == [
+        date(2026, 9, 24),
+        date(2026, 9, 22),
+        date(2026, 9, 20),
+    ]
+
+
+async def test_setup_prunes_old_backups_on_startup(
+    sqlite_database, monkeypatch
+):
+    monkeypatch.setattr(scheduler, "BACKUP_ENABLED", True)
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        scheduler.backup_service,
+        "prune_old_backups",
+        lambda: calls.append(True),
+    )
+
+    await scheduler.setup(FakeBot())
+    try:
+        assert calls == [True]
+    finally:
+        scheduler.shutdown()
 
 
 async def test_catch_up_registers_one_off_job_when_overdue(

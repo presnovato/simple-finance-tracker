@@ -339,7 +339,7 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
     )
 
     async def backup_job() -> None:
-        await backup_service.send_daily_backup(bot)
+        await backup_service.store_daily_backup(bot)
 
     if BACKUP_ENABLED:
         _scheduler.add_job(
@@ -350,6 +350,10 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
             coalesce=True,
             max_instances=1,
         )
+        try:
+            backup_service.prune_old_backups()
+        except Exception:
+            logger.exception("Не удалось очистить старые бэкапы на старте")
 
     _scheduler.start()
     logger.info("Вечерний пинг назначен на %02d:%02d", hour, minute)

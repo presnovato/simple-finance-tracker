@@ -49,3 +49,15 @@ def test_validate_config_reports_all_problems_at_once(monkeypatch):
     monkeypatch.setattr(config, "FALLBACK_MODEL", "")
 
     assert len(config.validate_config()) == 6
+
+
+def test_backup_retention_days_falls_back_to_default():
+    assert config._backup_retention_days("7") == 7
+    assert config._backup_retention_days("1") == 1
+    assert config._backup_retention_days("0") == 7
+    assert config._backup_retention_days("abc") == 7
+
+
+def test_backup_dir_falls_back_when_blank():
+    assert config._backup_dir("   ") == config.DEFAULT_BACKUP_DIR
+    assert config._backup_dir(" /tmp/daily ") == "/tmp/daily"

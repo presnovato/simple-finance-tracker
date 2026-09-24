@@ -13,7 +13,7 @@ from finance_bot.config import (
 )
 from finance_bot.database import connection
 from finance_bot.handlers import (
-    budget, capture, dashboard, debts, edit, errors, export, manual, notes,
+    backup, budget, capture, dashboard, debts, edit, errors, export, manual, notes,
     settings, start, subscriptions,
 )
 from finance_bot.handlers.access import OwnerOnlyMiddleware
@@ -70,6 +70,7 @@ async def main() -> None:
         dp.include_router(subscriptions.router)
         dp.include_router(edit.router)
         dp.include_router(budget.router)
+        dp.include_router(backup.router)
         dp.include_router(capture.router)
 
         api_runner = await server.start_server(PORT, bot=bot)

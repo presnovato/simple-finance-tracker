@@ -2,6 +2,7 @@ import logging
 import os
 import re
 from decimal import Decimal
+from pathlib import Path
 
 import pytz
 from dotenv import load_dotenv
@@ -48,6 +49,38 @@ def _backup_hour(value: str) -> int:
 
 
 BACKUP_HOUR: int = _backup_hour(os.getenv("BACKUP_HOUR", "4"))
+
+# Каталог ежедневных архивов; на Railway лежит внутри Volume рядом с базой.
+DEFAULT_BACKUP_DIR = str(Path(DB_PATH).expanduser().parent / "backups" / "daily")
+
+
+def _backup_dir(value: str) -> str:
+    resolved = value.strip()
+    if resolved:
+        return resolved
+    logger.warning("BACKUP_DIR пуст, использую %s", DEFAULT_BACKUP_DIR)
+    return DEFAULT_BACKUP_DIR
+
+
+BACKUP_DIR: str = _backup_dir(os.getenv("BACKUP_DIR", DEFAULT_BACKUP_DIR))
+
+
+def _backup_retention_days(value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError:
+        days = 0
+    if days >= 1:
+        return days
+    logger.warning(
+        "BACKUP_RETENTION_DAYS=%r некорректен (минимум 1), использую 7", value
+    )
+    return 7
+
+
+BACKUP_RETENTION_DAYS: int = _backup_retention_days(
+    os.getenv("BACKUP_RETENTION_DAYS", "7")
+)
 
 TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Moscow")
 
