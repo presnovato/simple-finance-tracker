@@ -209,7 +209,7 @@ class AllowAuthenticator:
 
 async def test_budget_api_auth_and_validation_are_owner_only(sqlite_database, monkeypatch):
     monkeypatch.setattr(
-        "finance_bot.api.routes.effective_today", lambda: date(2026, 9, 16)
+        "finance_bot.api.routes.budget.effective_today", lambda: date(2026, 9, 16)
     )
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()

@@ -118,8 +118,8 @@ async def test_manual_operation_create_route_validates_and_serializes(monkeypatc
             "subscription_id": None,
         }, None)
 
-    monkeypatch.setattr("finance_bot.api.routes.operation_service.create_operation", create_operation)
-    monkeypatch.setattr("finance_bot.api.routes.effective_today", lambda: date(2026, 9, 17))
+    monkeypatch.setattr("finance_bot.api.routes.operations.operation_service.create_operation", create_operation)
+    monkeypatch.setattr("finance_bot.api.routes.operations.effective_today", lambda: date(2026, 9, 17))
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -172,8 +172,8 @@ async def test_debts_summary_serializes_decimal_values(monkeypatch):
             },
         ]
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_debts", debt_rows)
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_debt_payments", payments)
+    monkeypatch.setattr("finance_bot.database.queries.list_debts", debt_rows)
+    monkeypatch.setattr("finance_bot.database.queries.list_debt_payments", payments)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -201,8 +201,8 @@ async def test_debts_summary_uses_current_body_balance_for_progress(monkeypatch)
     async def payments():
         return [{"pay_date": date(2026, 9, 1), "amount": Decimal("5000")}]
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_debts", debt_rows)
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_debt_payments", payments)
+    monkeypatch.setattr("finance_bot.database.queries.list_debts", debt_rows)
+    monkeypatch.setattr("finance_bot.database.queries.list_debt_payments", payments)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -225,7 +225,7 @@ async def test_balance_endpoint_serializes_snapshot(monkeypatch):
             "movement_count": 1,
         }
 
-    monkeypatch.setattr("finance_bot.api.routes.balance_service.get_snapshot", snapshot)
+    monkeypatch.setattr("finance_bot.api.routes.balance.balance_service.get_snapshot", snapshot)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -255,9 +255,9 @@ async def test_balance_endpoint_updates_anchor(monkeypatch):
             "movement_count": 2,
         }
 
-    monkeypatch.setattr("finance_bot.api.routes.effective_today", lambda: date(2026, 9, 8))
-    monkeypatch.setattr("finance_bot.api.routes.balance_service.set_anchor", set_anchor)
-    monkeypatch.setattr("finance_bot.api.routes.balance_service.get_snapshot", snapshot)
+    monkeypatch.setattr("finance_bot.api.routes.balance.effective_today", lambda: date(2026, 9, 8))
+    monkeypatch.setattr("finance_bot.api.routes.balance.balance_service.set_anchor", set_anchor)
+    monkeypatch.setattr("finance_bot.api.routes.balance.balance_service.get_snapshot", snapshot)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -287,10 +287,10 @@ async def test_crypto_overview_visibility_is_persisted_server_side(monkeypatch):
     async def set_visible(visible):
         state["visible"] = visible
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_crypto_holdings", holdings)
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_crypto_transactions", transactions)
-    monkeypatch.setattr("finance_bot.api.routes.crypto_service.is_overview_visible", is_visible)
-    monkeypatch.setattr("finance_bot.api.routes.crypto_service.set_overview_visible", set_visible)
+    monkeypatch.setattr("finance_bot.database.queries.list_crypto_holdings", holdings)
+    monkeypatch.setattr("finance_bot.database.queries.list_crypto_transactions", transactions)
+    monkeypatch.setattr("finance_bot.api.routes.crypto.crypto_service.is_overview_visible", is_visible)
+    monkeypatch.setattr("finance_bot.api.routes.crypto.crypto_service.set_overview_visible", set_visible)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -334,7 +334,7 @@ async def test_subscriptions_endpoint_serializes_monthly_cost(monkeypatch):
             "created_at": date(2026, 8, 8),
         }]
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.list_subscriptions", rows)
+    monkeypatch.setattr("finance_bot.database.queries.list_subscriptions", rows)
     async def totals(_start, _end):
         return {
             "expense": Decimal("19340.00"),
@@ -343,7 +343,7 @@ async def test_subscriptions_endpoint_serializes_monthly_cost(monkeypatch):
             "transfer_out": Decimal("0.00"),
         }
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.totals", totals)
+    monkeypatch.setattr("finance_bot.database.queries.totals", totals)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -397,7 +397,7 @@ async def test_subscription_charge_route_delegates_and_serializes(monkeypatch):
         assert expected_next_charge is None
         return {"subscription": subscription, "operation_id": 123, "stale": False}
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.charge_subscription", charge)
+    monkeypatch.setattr("finance_bot.database.queries.charge_subscription", charge)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -438,11 +438,11 @@ async def test_summary_includes_transfer_balance_without_smoothing(monkeypatch):
     async def expenses_by_category(_start, _end):
         return [{"category": "Продукты", "total": Decimal("30")}]
 
-    monkeypatch.setattr("finance_bot.api.routes.queries.totals", totals)
-    monkeypatch.setattr("finance_bot.api.routes.queries.expenses_by_day", expenses_by_day)
-    monkeypatch.setattr("finance_bot.api.routes.queries.income_by_day", income_by_day)
-    monkeypatch.setattr("finance_bot.api.routes.queries.expenses_by_category", expenses_by_category)
-    monkeypatch.setattr("finance_bot.api.routes.balance_service.get_snapshot", no_snapshot)
+    monkeypatch.setattr("finance_bot.database.queries.totals", totals)
+    monkeypatch.setattr("finance_bot.database.queries.expenses_by_day", expenses_by_day)
+    monkeypatch.setattr("finance_bot.database.queries.income_by_day", income_by_day)
+    monkeypatch.setattr("finance_bot.database.queries.expenses_by_category", expenses_by_category)
+    monkeypatch.setattr("finance_bot.api.routes.summary.balance_service.get_snapshot", no_snapshot)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
@@ -500,12 +500,12 @@ async def test_summary_uses_balance_anchor_period_and_exact_same_day_boundary(mo
         calls["categories"] = (start, end, start_ts)
         return [{"category": "Продукты", "total": Decimal("30")}]
 
-    monkeypatch.setattr("finance_bot.api.routes.effective_today", lambda: date(2026, 9, 10))
-    monkeypatch.setattr("finance_bot.api.routes.balance_service.get_snapshot", snapshot)
-    monkeypatch.setattr("finance_bot.api.routes.queries.totals", totals)
-    monkeypatch.setattr("finance_bot.api.routes.queries.expenses_by_day", expenses_by_day)
-    monkeypatch.setattr("finance_bot.api.routes.queries.income_by_day", income_by_day)
-    monkeypatch.setattr("finance_bot.api.routes.queries.expenses_by_category", expenses_by_category)
+    monkeypatch.setattr("finance_bot.api.routes.summary.effective_today", lambda: date(2026, 9, 10))
+    monkeypatch.setattr("finance_bot.api.routes.summary.balance_service.get_snapshot", snapshot)
+    monkeypatch.setattr("finance_bot.database.queries.totals", totals)
+    monkeypatch.setattr("finance_bot.database.queries.expenses_by_day", expenses_by_day)
+    monkeypatch.setattr("finance_bot.database.queries.income_by_day", income_by_day)
+    monkeypatch.setattr("finance_bot.database.queries.expenses_by_category", expenses_by_category)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
