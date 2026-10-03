@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, Router
@@ -144,6 +145,12 @@ async def test_rate_limit_resets_after_interval(monkeypatch):
     await dispatcher.feed_update(bot, _message_update(1))
     assert len(session.calls) == 1
 
-    monkeypatch.setattr(errors, "_last_notified_at", 0.0)
+    # monotonic() на свежей CI-машине может быть меньше интервала, поэтому
+    # сдвигаем отметку относительно текущего значения, а не к нулю.
+    monkeypatch.setattr(
+        errors,
+        "_last_notified_at",
+        time.monotonic() - errors.NOTIFY_INTERVAL_SECONDS - 1,
+    )
     await dispatcher.feed_update(bot, _message_update(2))
     assert len(session.calls) == 2
