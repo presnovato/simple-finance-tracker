@@ -75,6 +75,7 @@ async def main() -> None:
 
         api_runner = await server.start_server(PORT, bot=bot)
         await configure_menu_button(bot)
+        await start.configure_commands(bot)
         await scheduler.setup(bot)
         bundle.log_bundle_freshness()
 

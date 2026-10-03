@@ -324,7 +324,7 @@ async def on_delete(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.message(Command("список"))
+@router.message(Command("список", "list"))
 async def cmd_many_shot(message: Message) -> None:
     if not llm.is_available():
         await message.answer(
