@@ -46,6 +46,43 @@ async def expenses_by_category(
     )
     return _rows(rows)
 
+
+async def income_by_category(start: date, end: date) -> list[dict]:
+    """Возвращает активные доходы периода по категориям."""
+    rows = await get_pool().fetch(
+        """
+        SELECT coalesce(category, 'Прочее') AS category, sum(amount) AS total
+        FROM operations
+        WHERE type = 'доход' AND op_date BETWEEN ? AND ?
+          AND deleted_at IS NULL
+        GROUP BY 1 ORDER BY total DESC
+        """,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    return _rows(rows)
+
+
+async def operation_counts_for_period(start: date, end: date) -> dict:
+    """Считает активные операции и ожидающие проверки за период."""
+    row = await get_pool().fetchrow(
+        """
+        SELECT count(*) AS operation_count,
+               count(*) FILTER (WHERE needs_review) AS needs_review_count
+        FROM operations
+        WHERE op_date BETWEEN ? AND ? AND deleted_at IS NULL
+        """,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    if row is None:
+        raise RuntimeError("SQLite не вернул счётчики операций")
+    return {
+        "operation_count": int(row["operation_count"]),
+        "needs_review_count": int(row["needs_review_count"]),
+    }
+
+
 async def totals(
     start: date, end: date, *, start_ts: datetime | None = None
 ) -> dict:

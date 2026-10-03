@@ -1,9 +1,9 @@
 """Сбор фактического финансового snapshot для Markdown-выгрузки."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from finance_bot.core.dates import effective_today
+from finance_bot.core.dates import effective_today, week_bounds
 from finance_bot.core.debts import repaid_principal
 from finance_bot.database import queries
 from finance_bot.services import balance as balance_service
@@ -182,4 +182,35 @@ async def build_finance_snapshot(as_of: date | None = None) -> dict:
         },
         "previous_total_debt": None,
         "history_unavailable_reason": "история snapshot Weekly Sync не хранится",
+    }
+
+
+async def build_mcp_week(
+    week_start: date, *, today: date | None = None
+) -> dict:
+    """Собирает агрегаты зарегистрированных операций одной недели для MCP."""
+    week_end = week_start + timedelta(days=6)
+    totals = await queries.totals(week_start, week_end)
+    expense_rows = await queries.expenses_by_category(week_start, week_end)
+    income_rows = await queries.income_by_category(week_start, week_end)
+    counts = await queries.operation_counts_for_period(week_start, week_end)
+    current_day = today or effective_today()
+    current_start, _ = week_bounds(current_day)
+    return {
+        "week_start": week_start,
+        "week_end": week_end,
+        "as_of": current_day,
+        "is_current_week": week_start == current_start,
+        "operation_count": counts["operation_count"],
+        "needs_review_count": counts["needs_review_count"],
+        "income": totals["income"],
+        "expense": totals["expense"],
+        "transfer_in": totals["transfer_in"],
+        "transfer_out": totals["transfer_out"],
+        "income_by_category": income_rows,
+        "expense_by_category": expense_rows,
+        "coverage_note": (
+            "Агрегаты отражают только записанные активные операции; "
+            "полнота ручного учёта не подтверждается."
+        ),
     }

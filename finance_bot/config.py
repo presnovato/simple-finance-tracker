@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 ALLOWED_USER_ID: int = int(os.getenv("ALLOWED_USER_ID", "0"))
+# Отдельный credential для read-only MCP-маршрутов. Никогда не совпадает с BOT_TOKEN.
+FINANCE_AGENT_TOKEN: str = (os.getenv("FINANCE_AGENT_TOKEN", "") or "").strip()
 
 
 def _sqlite_path(value: str) -> str:

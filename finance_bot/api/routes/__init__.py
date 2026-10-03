@@ -8,6 +8,7 @@ from . import (
     categories,
     crypto,
     debts,
+    integrations,
     operations,
     personal_debts,
     subscriptions,
@@ -16,6 +17,7 @@ from . import (
 
 
 def setup_routes(app: web.Application) -> None:
+    integrations.register(app)
     summary.register(app)
     budget.register(app)
     operations.register(app)
