@@ -25,8 +25,10 @@ Owner-only Telegram-бот и Telegram Mini App для личного учёта
 - `tma/` — React 19, TypeScript, Vite, `tg-mini-app-uikit`, Recharts.
 - `finance_bot/api/` — owner-only API с проверкой Telegram `initData`.
 - `tma/dist/` — production bundle, который раздаёт aiohttp-сервер.
-- `tools/mock_api_server.py` и Docker mock-профиль — безопасный локальный просмотр TMA
-  без Telegram и внешнего API.
+- `/api/integrations/finance/*` — owner-only read-only маршруты для локального
+  Finance MCP (`finance_mcp/`).
+- Docker mock-профиль (`tools/mock_tma_server.py` + `tools/seed_mock_database.py`) —
+  безопасный локальный просмотр TMA на настоящем API и mock-базе без Telegram.
 
 ## Быстрый старт
 
@@ -56,7 +58,59 @@ python -m finance_bot.main
 - `/start` — справка и запуск;
 - `/manual` — пошаговый ввод операции без ИИ;
 - `/dashboard` — сводка и ссылка на TMA;
-- `/backup` — получить копию базы за нужный день.
+- `/budget` — статус недельного бюджета;
+- `/balance` — деньги на руках; `/balance 15000` — задать новый якорь;
+- `/list` (или `/список`) — разобрать следующий скриншот как список трат за день;
+- `/note текст` — заметка к операции (ответом на подтверждение);
+- `/export` — выгрузить операции или копию базы;
+- `/backup` — получить копию базы за нужный день;
+- `/remind 21:30` — время вечернего пинга;
+- `/cancel` — отменить ручной ввод.
+
+Меню «/» регистрируется ботом на старте (`set_my_commands`) только для чата владельца.
+
+## Read-only MCP
+
+В `finance_mcp/` находится локальный STDIO-коннектор для Codex. Он предоставляет
+недельные агрегаты, текущий денежный и долговой снимок и страницу операций с
+фильтрами; STDIO поддерживает актуальный protocol discovery и legacy `initialize`
+handshake. Операционные и TMA write-маршруты коннектору не открыты.
+
+Для включения API задай на сервисе переменную `FINANCE_AGENT_TOKEN` отдельным
+случайным секретом; не используй `BOT_TOKEN`. В Codex настрой локальный сервер
+`finance_mcp` с `FINANCE_API_URL=https://<домен>` и передай токен через
+`env_vars = ["FINANCE_AGENT_TOKEN"]`. Не добавляй значение токена в Git или
+файл проекта. Вне локальной разработки коннектор требует HTTPS.
+
+Пример записи в пользовательском `config.toml` после публикации API:
+
+```toml
+[mcp_servers.finance_tracker]
+command = "C:\\Python313\\python.exe"
+args = ["-m", "finance_mcp"]
+cwd = 'D:\~ Quantified Self Project\Finance Tracker\Finance-Tracker-public-snapshot'
+enabled = true
+enabled_tools = [
+  "finance_get_week",
+  "finance_get_snapshot",
+  "finance_list_operations",
+]
+env_vars = ["FINANCE_AGENT_TOKEN"]
+
+[mcp_servers.finance_tracker.env]
+FINANCE_API_URL = "https://<домен-Railway>"
+```
+
+`FINANCE_AGENT_TOKEN` нужно задать в окружении пользователя, из которого Codex
+запускает MCP. Значение должно совпадать с серверной переменной. До публикации
+API и проверки реальной недели эту запись не включать.
+
+Поддерживаются только `GET /api/integrations/finance/week`,
+`GET /api/integrations/finance/snapshot` и
+`GET /api/integrations/finance/operations`. Финансовый snapshot относится к
+текущему состоянию; исторические остатки и отдельные остатки по счетам в базе
+не хранятся. Вызов `/api/budget` из интеграции намеренно не используется,
+потому что чтение текущего бюджета может создать недельный снимок.
 
 ## Проверки
 
@@ -186,7 +240,7 @@ railway volume files --volume <volume> upload ./finance.db /finance.db --overwri
 
 ## Деплой
 
-GitHub → Railway (auto-deploy), web process задаётся в `Procfile`, Railway Volume
+GitHub (`developer`) → Railway (auto-deploy после зелёного CI), web process задаётся в `Procfile`, Railway Volume
 монтируется в `/data`. Для production нужны `DB_PATH=/data/finance.db` и
 `TMA_URL` с публичным HTTPS-доменом Railway; `PORT` подставляет Railway.
 Секреты хранятся только в variables Railway и локальном `.env`.

@@ -2,7 +2,22 @@
 
 ## [Не выпущено]
 
+### Добавлено
+
+- Read-only Finance MCP (`finance_mcp/`) и owner-only маршруты
+  `/api/integrations/finance/{week,snapshot,operations}` с отдельным
+  `FINANCE_AGENT_TOKEN`; без токена маршруты отвечают 503.
+- Меню команд «/» в чате владельца (`set_my_commands`), латинский алиас `/list`
+  для `/список`, полная справка `/start`.
+
 ### Изменено
+
+- CI запускается и на пушах в `developer`, из которого деплоится production.
+
+### Удалено
+
+- Устаревший `tools/mock_api_server.py`: mock-профиль работает на настоящем API
+  и mock-базе.
 
 - Внутренняя структура без изменения поведения: `database/connection.py`
   разделён на `schema.py`, `migrations.py` и `connection.py`;
