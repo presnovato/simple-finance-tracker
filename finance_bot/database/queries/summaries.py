@@ -29,6 +29,43 @@ async def pending_review() -> list[dict]:
     return _rows(rows)
 
 
+async def needs_review_count() -> int:
+    """Сколько активных операций ждут проверки — для счётчика в TMA."""
+    row = await get_pool().fetchrow(
+        "SELECT count(*) AS count FROM operations "
+        "WHERE needs_review AND deleted_at IS NULL"
+    )
+    if row is None:
+        raise RuntimeError("SQLite не вернул счётчик проверок")
+    return int(row["count"])
+
+
+async def archived_expense_categories(active: tuple[str, ...]) -> list[str]:
+    """Неактивные значения расходов из операций и сохранённых лимитов.
+
+    Учитываем и текущий шаблон, и исторические снимки недель: категория лимита
+    могла исчезнуть из шаблона, но остаться в сохранённой неделе. Ничего из
+    данных при этом не переклассифицируется — только собирается список значений.
+    """
+    placeholders = ", ".join("?" for _ in active)
+    rows = await get_pool().fetch(
+        f"""
+        SELECT category FROM operations
+        WHERE type = 'расход' AND category IS NOT NULL
+          AND category NOT IN ({placeholders})
+        UNION
+        SELECT category FROM weekly_budget_template_categories
+        WHERE category NOT IN ({placeholders})
+        UNION
+        SELECT category FROM weekly_budget_week_categories
+        WHERE category NOT IN ({placeholders})
+        ORDER BY 1
+        """,
+        *active, *active, *active,
+    )
+    return [row["category"] for row in rows]
+
+
 async def expenses_by_category(
     start: date, end: date, *, start_ts: datetime | None = None
 ) -> list[dict]:
@@ -36,7 +73,7 @@ async def expenses_by_category(
     period_clause, period_args = _period_clause(start, end, start_ts)
     rows = await get_pool().fetch(
         f"""
-        SELECT coalesce(category, 'Прочее') AS category, sum(amount) AS total
+        SELECT coalesce(category, 'Без категории') AS category, sum(amount) AS total
         FROM operations
         WHERE type = 'расход' AND {period_clause}
           AND deleted_at IS NULL
@@ -51,7 +88,7 @@ async def income_by_category(start: date, end: date) -> list[dict]:
     """Возвращает активные доходы периода по категориям."""
     rows = await get_pool().fetch(
         """
-        SELECT coalesce(category, 'Прочее') AS category, sum(amount) AS total
+        SELECT coalesce(category, 'Без категории') AS category, sum(amount) AS total
         FROM operations
         WHERE type = 'доход' AND op_date BETWEEN ? AND ?
           AND deleted_at IS NULL

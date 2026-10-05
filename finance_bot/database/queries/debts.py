@@ -372,7 +372,7 @@ async def create_debt_payment(
                     """
                     INSERT INTO operations (
                       op_date, type, amount, category, comment, source, needs_review
-                    ) VALUES (?, 'расход', ?, 'Долги', ?, 'tma-долг', 0)
+                    ) VALUES (?, 'расход', ?, 'Финансовые обязательства', ?, 'tma-долг', 0)
                     RETURNING id
                     """,
                     pay_date.isoformat(),

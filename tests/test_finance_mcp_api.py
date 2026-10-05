@@ -88,7 +88,7 @@ async def test_week_summary_filters_dates_deleted_rows_and_formats_categories(
         "finance_bot.api.routes.integrations.effective_today", lambda: date(2026, 9, 28)
     )
     await _insert(
-        date(2026, 9, 21), "расход", "120.50", category="Продукты",
+        date(2026, 9, 21), "расход", "120.50", category="Еда дома",
         needs_review=True,
     )
     await _insert(
@@ -101,11 +101,11 @@ async def test_week_summary_filters_dates_deleted_rows_and_formats_categories(
         date(2026, 9, 23), "перевод", "5", transfer_direction="out"
     )
     deleted = await _insert(
-        date(2026, 9, 27), "расход", "90", category="Кафе/Досуг"
+        date(2026, 9, 27), "расход", "90", category="Еда вне дома"
     )
     await queries.delete_operation(deleted)
     await _insert(
-        date(2026, 9, 20), "расход", "40", category="Продукты"
+        date(2026, 9, 20), "расход", "40", category="Еда дома"
     )
 
     async with _client() as client:
@@ -126,7 +126,7 @@ async def test_week_summary_filters_dates_deleted_rows_and_formats_categories(
     assert payload["transfer_in"] == "10.00"
     assert payload["transfer_out"] == "5.00"
     assert payload["expense_by_category"] == [
-        {"category": "Продукты", "total": "120.50"}
+        {"category": "Еда дома", "total": "120.50"}
     ]
     assert payload["income_by_category"] == [
         {"category": "Услуги", "total": "250.00"}
@@ -193,7 +193,7 @@ async def test_snapshot_preserves_unknown_values_and_gets_do_not_mutate_budget(
     sqlite_database, monkeypatch
 ):
     monkeypatch.setattr(auth, "FINANCE_AGENT_TOKEN", "finance-test-token")
-    await _insert(date(2026, 9, 28), "расход", "50", category="Продукты")
+    await _insert(date(2026, 9, 28), "расход", "50", category="Еда дома")
     pool = connection.get_pool()
     before = await pool.fetchrow("SELECT count(*) AS count FROM weekly_budget_weeks")
     before_changes = await pool.fetchrow("SELECT total_changes() AS count")
@@ -220,17 +220,17 @@ async def test_snapshot_preserves_unknown_values_and_gets_do_not_mutate_budget(
 async def test_operations_page_filters_and_whitelists_fields(sqlite_database, monkeypatch):
     monkeypatch.setattr(auth, "FINANCE_AGENT_TOKEN", "finance-test-token")
     await _insert(
-        date(2026, 9, 25), "расход", "12.34", category="Продукты",
+        date(2026, 9, 25), "расход", "12.34", category="Еда дома",
         comment="рынок", account="Карта", note="заметка", needs_review=True,
     )
     await _insert(
-        date(2026, 9, 24), "расход", "8", category="Кафе/Досуг",
+        date(2026, 9, 24), "расход", "8", category="Еда вне дома",
         comment="кофе",
     )
     async with _client() as client:
         response = await client.get(
             "/api/integrations/finance/operations?date_from=2026-09-24&date_to=2026-09-25"
-            "&type=%D1%80%D0%B0%D1%81%D1%85%D0%BE%D0%B4&category=%D0%9F%D1%80%D0%BE%D0%B4%D1%83%D0%BA%D1%82%D1%8B"
+            "&type=%D1%80%D0%B0%D1%81%D1%85%D0%BE%D0%B4&category=%D0%95%D0%B4%D0%B0%20%D0%B4%D0%BE%D0%BC%D0%B0"
             "&needs_review=true",
             headers={"Authorization": "Bearer finance-test-token"},
         )
@@ -243,7 +243,7 @@ async def test_operations_page_filters_and_whitelists_fields(sqlite_database, mo
         "op_date": "2026-09-25",
         "type": "расход",
         "amount": "12.34",
-        "category": "Продукты",
+        "category": "Еда дома",
         "account": "Карта",
         "comment": "рынок",
         "note": "заметка",
@@ -258,7 +258,7 @@ async def test_operations_page_caps_period_and_uses_cursor(sqlite_database, monk
     monkeypatch.setattr(auth, "FINANCE_AGENT_TOKEN", "finance-test-token")
     for day in range(1, 42):
         await _insert(
-            date(2026, 9, 1), "расход", str(day), category="Продукты"
+            date(2026, 9, 1), "расход", str(day), category="Еда дома"
         )
     async with _client() as client:
         headers = {"Authorization": "Bearer finance-test-token"}

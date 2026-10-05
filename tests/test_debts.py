@@ -90,7 +90,7 @@ def test_prompts_fix_credit_payment_as_expense():
     extract_prompt = llm.build_extract_prompt(TODAY)
     intent_prompt = llm.build_debt_intent_prompt(TODAY)
     assert "платёж по банковскому кредиту/рассрочке = расход" in extract_prompt
-    assert "категория «Долги»" in extract_prompt
+    assert "категория «Финансовые обязательства»" in extract_prompt
     assert "personal_debt_repay" in intent_prompt
     assert "direction owed_to_me" in intent_prompt
 

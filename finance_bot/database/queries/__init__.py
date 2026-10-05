@@ -16,6 +16,11 @@ from ._common import (
     from_cents,
     to_cents,
 )
+from .balance_snapshots import (
+    latest_balance_snapshot,
+    list_balance_snapshots,
+    upsert_balance_snapshot,
+)
 from .budget import (
     claim_weekly_budget_notification,
     claim_weekly_budget_notifications,
@@ -92,9 +97,11 @@ from .subscriptions import (
     patch_subscription,
 )
 from .summaries import (
+    archived_expense_categories,
     day_operations,
     expenses_by_category,
     income_by_category,
+    needs_review_count,
     operation_counts_for_period,
     pending_review,
     totals,
@@ -102,6 +109,7 @@ from .summaries import (
 )
 from .tma import (
     confirm_operation,
+    confirm_review_for_date,
     expenses_by_day,
     get_operation,
     income_by_day,
@@ -115,6 +123,7 @@ from .tma import (
 
 __all__ = [
     "adjust_debt_balance",
+    "archived_expense_categories",
     "BOOL_COLUMNS",
     "cancel_subscription",
     "CENTS",
@@ -122,6 +131,7 @@ __all__ = [
     "claim_weekly_budget_notification",
     "claim_weekly_budget_notifications",
     "confirm_operation",
+    "confirm_review_for_date",
     "create_debt_payment",
     "create_pending_capture",
     "create_personal_debt_payment",
@@ -162,6 +172,8 @@ __all__ = [
     "insert_operation_once",
     "insert_personal_debt",
     "insert_subscription",
+    "latest_balance_snapshot",
+    "list_balance_snapshots",
     "list_crypto_holdings",
     "list_crypto_transactions",
     "list_debt_payments",
@@ -170,6 +182,7 @@ __all__ = [
     "list_personal_debts",
     "list_subscriptions",
     "MONEY_COLUMNS",
+    "needs_review_count",
     "operations_for_export",
     "operation_counts_for_period",
     "operations_totals",
@@ -200,6 +213,7 @@ __all__ = [
     "TS_COLUMNS",
     "TWO_PLACES",
     "update_operation",
+    "upsert_balance_snapshot",
     "weekly_budget_neighbor_starts",
     "weekly_budget_spent",
 ]

@@ -75,6 +75,7 @@ export interface Summary {
   balance: string
   average_daily: string
   average_daily_income: string
+  review_count: number
   days: SummaryDay[]
   categories: SummaryCategory[]
 }
@@ -102,6 +103,7 @@ export interface OperationTotals {
 export interface Categories {
   expense: string[]
   income: string[]
+  archived_expense: string[]
 }
 
 export type BudgetStatus = 'ok' | 'warning' | 'exceeded'
@@ -146,6 +148,7 @@ export interface HistoryPreset {
   date_from?: string
   date_to?: string
   category?: string
+  needs_review?: boolean
 }
 
 export interface Debt {
@@ -286,4 +289,54 @@ export interface CryptoPageData {
   items: CryptoHolding[]
   transactions: CryptoTransaction[]
   overview_visible: boolean
+}
+
+export interface UpcomingPayment {
+  kind: 'subscription' | 'debt'
+  id: number
+  name: string
+  amount: string | null
+  date: string
+}
+
+export interface UpcomingResponse {
+  date_from: string
+  date_to: string
+  items: UpcomingPayment[]
+  errors: string[]
+}
+
+export interface UpcomingFocus {
+  kind: 'subscription' | 'debt'
+  id: number
+  nonce: number
+}
+
+export interface CategoryComparison {
+  category: string
+  current: string
+  previous: string
+  change: string
+  percent: string | null
+  appeared: boolean
+}
+
+export interface CategoryComparisonResponse {
+  month: string
+  period_start: string
+  period_end: string
+  previous_start: string
+  previous_end: string
+  categories: CategoryComparison[]
+}
+
+export interface BalanceHistoryPoint {
+  date: string
+  amount: string
+}
+
+export interface BalanceHistoryResponse {
+  date_from: string
+  date_to: string
+  items: BalanceHistoryPoint[]
 }

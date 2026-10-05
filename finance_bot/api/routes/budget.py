@@ -3,6 +3,7 @@
 from aiohttp import web
 
 from finance_bot.api import schemas
+from finance_bot.config import EXPENSE_CATEGORIES
 from finance_bot.core.dates import effective_today
 from finance_bot.services import budget as budget_service
 
@@ -114,6 +115,16 @@ async def update_budget_settings(request: web.Request) -> web.Response:
         return _error(str(exc))
     except (web.HTTPBadRequest, TypeError):
         return _error("некорректный JSON")
+
+    # Существующие архивные лимиты можно сохранить/удалить, но новый лимит —
+    # только для активной категории (spec 01).
+    existing = await budget_service.get_settings()
+    allowed = set(EXPENSE_CATEGORIES) | {
+        item["category"] for item in existing.get("categories", [])
+    }
+    if any(item["category"] not in allowed for item in fields["categories"]):
+        return _error("новый лимит можно создать только для активной категории")
+
     settings = await budget_service.save_settings(
         fields["overall_limit"], fields["categories"], today=effective_today()
     )

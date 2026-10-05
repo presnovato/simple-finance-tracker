@@ -233,6 +233,15 @@ CREATE INDEX IF NOT EXISTS idx_weekly_budget_week_categories
   ON weekly_budget_week_categories (week_start);
 CREATE INDEX IF NOT EXISTS idx_weekly_budget_weeks_start
   ON weekly_budget_weeks (week_start);
+
+-- Дневные снимки «денег на руках» для истории баланса (spec 06).
+-- Уникальность по эффективной дате: повторный запуск обновляет запись.
+CREATE TABLE IF NOT EXISTS balance_snapshots (
+  snapshot_date TEXT PRIMARY KEY,
+  amount        INTEGER NOT NULL,
+  created_at    TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))
+);
 """
 
 

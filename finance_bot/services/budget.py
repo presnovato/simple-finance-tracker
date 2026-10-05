@@ -2,11 +2,11 @@
 
 import logging
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from aiogram import Bot
 
-from finance_bot.config import ALLOWED_USER_ID, EXPENSE_CATEGORIES
+from finance_bot.config import ALLOWED_USER_ID, EXPENSE_CATEGORIES, plural_ru
 from finance_bot.core.budget import (
     budget_line,
     overall_line,
@@ -195,6 +195,41 @@ def _threshold_text(report: dict, events: list[str]) -> str:
     )
 
 
+def weekly_reference_line(report: dict, today: date) -> str | None:
+    """Справочная строка об остатке недели для вечернего отчёта (spec 03).
+
+    Считает дни после текущего эффективного дня до конца ISO-недели. Среднее —
+    только арифметическая справка, не план расходов. В последний день недели
+    среднее не вычисляется; при исчерпанном лимите отрицательного среднего нет.
+    """
+    overall = report.get("overall")
+    if overall is None:
+        return None
+    remaining = overall["remaining"]
+    days_left = (report["week_end"] - today).days
+
+    if days_left <= 0:
+        if remaining < 0:
+            return f"Итог недели: перерасход {fmt_amount(abs(remaining))}"
+        return f"Итог недели: остаток {fmt_amount(remaining)}"
+
+    day_word = plural_ru(days_left, ("день", "дня", "дней"))
+    if remaining < 0:
+        return (
+            f"Перерасход {fmt_amount(abs(remaining))} — "
+            f"до конца недели {days_left} {day_word}."
+        )
+    if remaining == 0:
+        return f"Лимит исчерпан — до конца недели {days_left} {day_word}."
+    average = (remaining / days_left).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    return (
+        f"Осталось {fmt_amount(remaining)} на {days_left} {day_word} — "
+        f"в среднем {fmt_amount(average)}/день."
+    )
+
+
 async def evening_budget_lines(today: date) -> list[str]:
     report = await get_budget(today=today)
     if not report.get("configured"):
@@ -203,6 +238,10 @@ async def evening_budget_lines(today: date) -> list[str]:
     events = await _claim_thresholds(report)
     if events:
         lines.append(_threshold_text(report, events))
+
+    reference = weekly_reference_line(report, today)
+    if reference:
+        lines.append(reference)
 
     overall = report.get("overall")
     if (

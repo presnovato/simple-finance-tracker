@@ -1,12 +1,15 @@
-"""Денежный якорь (баланс)."""
+"""Денежный якорь (баланс) и история «денег на руках»."""
 
 from aiohttp import web
 
 from finance_bot.api import schemas
 from finance_bot.core.dates import effective_today
+from finance_bot.database import queries
 from finance_bot.services import balance as balance_service
 
 from ._common import _error
+
+MAX_HISTORY_DAYS = 366
 
 
 def _cash_balance_payload(snapshot: dict) -> dict:
@@ -40,6 +43,33 @@ async def update_cash_balance(request: web.Request) -> web.Response:
     return web.json_response(_cash_balance_payload(snapshot))
 
 
+async def balance_history(request: web.Request) -> web.Response:
+    """Read-only история «денег на руках» с ограничением периода (spec 06)."""
+    try:
+        date_from = schemas.iso_date(request.query.get("date_from"))
+        date_to = schemas.iso_date(request.query.get("date_to"))
+    except schemas.ValidationError as exc:
+        return _error(str(exc))
+    if date_from > date_to:
+        return _error("начало периода не может быть позже конца")
+    if (date_to - date_from).days >= MAX_HISTORY_DAYS:
+        return _error("период истории слишком длинный")
+
+    rows = await queries.list_balance_snapshots(date_from, date_to)
+    return web.json_response({
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "items": [
+            {
+                "date": row["snapshot_date"].isoformat(),
+                "amount": schemas.money_string(row["amount"]),
+            }
+            for row in rows
+        ],
+    })
+
+
 def register(app: web.Application) -> None:
     app.router.add_get("/api/balance", cash_balance)
     app.router.add_patch("/api/balance", update_cash_balance)
+    app.router.add_get("/api/balance/history", balance_history)

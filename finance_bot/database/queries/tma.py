@@ -110,6 +110,7 @@ async def list_operations(
     *,
     before: tuple[date, int] | None = None,
     category: str | None = None,
+    category_null: bool | None = None,
     type_: str | None = None,
     query: str | None = None,
     needs_review: bool | None = None,
@@ -121,6 +122,7 @@ async def list_operations(
     conditions, args = _operation_filter_parts(
         before=before,
         category=category,
+        category_null=category_null,
         type_=type_,
         query=query,
         needs_review=needs_review,
@@ -147,6 +149,7 @@ def _operation_filter_parts(
     *,
     before: tuple[date, int] | None = None,
     category: str | None = None,
+    category_null: bool | None = None,
     type_: str | None = None,
     query: str | None = None,
     needs_review: bool | None = None,
@@ -171,7 +174,10 @@ def _operation_filter_parts(
             f"(op_date = {date_equal} AND id < {id_before}))"
         )
     if category:
-        conditions.append(f"coalesce(category, 'Прочее') = {bind(category)}")
+        # Архивная категория ищется точным значением, а не через «Прочее».
+        conditions.append(f"category = {bind(category)}")
+    elif category_null:
+        conditions.append("category IS NULL")
     if type_:
         conditions.append(f"type = {bind(type_)}")
     if query:
@@ -192,6 +198,7 @@ def _operation_filter_parts(
 async def operations_totals(
     *,
     category: str | None = None,
+    category_null: bool | None = None,
     type_: str | None = None,
     query: str | None = None,
     needs_review: bool | None = None,
@@ -201,6 +208,7 @@ async def operations_totals(
 ) -> dict:
     conditions, args = _operation_filter_parts(
         category=category,
+        category_null=category_null,
         type_=type_,
         query=query,
         needs_review=needs_review,
@@ -270,6 +278,24 @@ async def confirm_operation(op_id: int) -> dict | None:
         op_id,
     )
     return _row(row) if row else None
+
+
+async def confirm_review_for_date(op_date: date) -> int:
+    """Снимает needs_review у активных операций одного дня.
+
+    Меняет только признак проверки; суммы, типы, даты и комментарии не
+    затрагиваются. Возвращает число обновлённых операций и безопасна при
+    повторном нажатии (второй раз вернёт 0).
+    """
+    rows = await get_pool().fetch(
+        """
+        UPDATE operations SET needs_review = 0
+        WHERE op_date = ? AND needs_review AND deleted_at IS NULL
+        RETURNING id
+        """,
+        op_date.isoformat(),
+    )
+    return len(rows)
 
 
 async def soft_delete_operation(op_id: int) -> dict | None:

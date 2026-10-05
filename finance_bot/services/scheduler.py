@@ -19,6 +19,7 @@ from finance_bot.config import (
     BACKUP_HOUR,
     DAY_BOUNDARY_HOUR,
     DEFAULT_REMINDER_TIME,
+    TMA_URL,
     plural_ru,
 )
 from finance_bot.core.dashboard import fmt_amount
@@ -29,7 +30,9 @@ from finance_bot.core.subscriptions import (
 )
 from finance_bot.database import queries
 from finance_bot.services import backup as backup_service
+from finance_bot.services import balance_history
 from finance_bot.services import budget as budget_service
+from finance_bot.services import weekly_report
 from finance_bot.webapp import web_app_markup
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,8 @@ RETRY_JOB_ID = "evening_ping_retry"
 CATCH_UP_JOB_ID = "evening_ping_catch_up"
 BACKUP_JOB_ID = "daily_backup"
 BACKUP_CATCH_UP_JOB_ID = "daily_backup_catch_up"
+BALANCE_SNAPSHOT_JOB_ID = "balance_snapshot"
+BALANCE_SNAPSHOT_CATCH_UP_JOB_ID = "balance_snapshot_catch_up"
 EVENING_MARKER_SETTING = "evening_ping_last_date"
 RETRY_DELAY_MINUTES = 10
 CATCH_UP_DELAY_SECONDS = 30
@@ -124,12 +129,22 @@ async def build_evening_message() -> tuple[str, InlineKeyboardMarkup | None]:
     review = await queries.pending_review()
     if review:
         lines.append("")
-        lines.append(f"⚠️ Требуют уточнения ({len(review)}):")
-        for op in review:
-            desc = op["comment"] or op["category"] or "без описания"
-            lines.append(f"• {op['op_date']:%d.%m} {fmt_amount(op['amount'])} — {desc}")
-        lines.append("Ответь (reply) на сообщение бота о нужной операции "
-                     "и напиши, что поправить.")
+        if TMA_URL:
+            # Короткий путь: длинный перечень старых операций не показываем,
+            # отправляем в очередь проверки внутри приложения.
+            lines.append(
+                f"⚠️ Требуют уточнения: {len(review)}. "
+                "Открой очередь в приложении."
+            )
+        else:
+            lines.append(f"⚠️ Требуют уточнения ({len(review)}):")
+            for op in review:
+                desc = op["comment"] or op["category"] or "без описания"
+                lines.append(
+                    f"• {op['op_date']:%d.%m} {fmt_amount(op['amount'])} — {desc}"
+                )
+            lines.append("Ответь (reply) на сообщение бота о нужной операции "
+                         "и напиши, что поправить.")
 
     active_subscriptions = await queries.list_subscriptions("active")
     due_tomorrow = [
@@ -170,7 +185,31 @@ async def build_evening_message() -> tuple[str, InlineKeyboardMarkup | None]:
     if budget_lines:
         lines.append("")
         lines.extend(budget_lines)
-    return "\n".join(lines), _due_keyboard(due)
+
+    if today.weekday() == 6:
+        # Воскресный отчёт идёт в том же сообщении, без второго пинга.
+        try:
+            lines.append("")
+            lines.extend(await weekly_report.sunday_lines(today))
+        except Exception:
+            logger.exception("Не удалось собрать воскресный отчёт")
+
+    extra: list[InlineKeyboardMarkup] = []
+    if ops:
+        # Подтверждение дня: снимает needs_review только у операций этого дня.
+        extra.append(InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✅ Всё за сегодня верно",
+                callback_data=f"review:day:{today.isoformat()}",
+            )
+        ]]))
+    if review and TMA_URL:
+        queue = web_app_markup(
+            f"На проверку ({len(review)})", tab="history", review=True
+        )
+        if queue is not None:
+            extra.append(queue)
+    return "\n".join(lines), _merge_markups(*extra, _due_keyboard(due))
 
 
 def scheduled_moment(
@@ -341,6 +380,9 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
     async def backup_job() -> None:
         await backup_service.store_daily_backup(bot)
 
+    async def balance_snapshot_job() -> None:
+        await balance_history.store_daily_snapshot()
+
     if BACKUP_ENABLED:
         _scheduler.add_job(
             backup_job,
@@ -358,6 +400,16 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
     _scheduler.start()
     logger.info("Вечерний пинг назначен на %02d:%02d", hour, minute)
 
+    # Дневной снимок «денег на руках»: финальное значение в конце дня (spec 06).
+    _scheduler.add_job(
+        balance_snapshot_job,
+        CronTrigger(hour=23, minute=30, timezone=TZ),
+        id=BALANCE_SNAPSHOT_JOB_ID,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
+
     if BACKUP_ENABLED:
         await schedule_catch_up_if_overdue(
             BACKUP_CATCH_UP_JOB_ID,
@@ -366,6 +418,12 @@ async def setup(bot: Bot) -> AsyncIOScheduler:
             max_age=timedelta(hours=26),
         )
     await schedule_evening_catch_up(bot)
+    await schedule_catch_up_if_overdue(
+        BALANCE_SNAPSHOT_CATCH_UP_JOB_ID,
+        balance_snapshot_job,
+        last_run_key=balance_history.LAST_AT_SETTING,
+        max_age=timedelta(hours=26),
+    )
     return _scheduler
 
 

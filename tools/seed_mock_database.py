@@ -94,11 +94,11 @@ async def _seed(today: date) -> None:
     await budget_service.save_settings(
         Decimal("10000.00"),
         [
-            {"category": "Продукты", "limit": Decimal("4500.00")},
+            {"category": "Еда дома", "limit": Decimal("4500.00")},
             {"category": "Транспорт", "limit": Decimal("1800.00")},
-            {"category": "Кафе/Досуг", "limit": Decimal("1500.00")},
+            {"category": "Еда вне дома", "limit": Decimal("1500.00")},
             {"category": "Жильё", "limit": Decimal("3000.00")},
-            {"category": "Долги", "limit": Decimal("1000.00")},
+            {"category": "Финансовые обязательства", "limit": Decimal("1000.00")},
             {"category": "Прочее", "limit": Decimal("800.00")},
         ],
         today=today,
@@ -110,19 +110,19 @@ async def _seed(today: date) -> None:
     def current_day(days_back: int) -> date:
         return today - timedelta(days=min(days_back, available_days))
 
-    await _insert_expense(current_day(0), "3200.00", "Продукты", needs_review=True)
+    await _insert_expense(current_day(0), "3200.00", "Еда дома", needs_review=True)
     await _insert_expense(current_day(1), "1200.00", "Транспорт")
-    await _insert_expense(current_day(2), "950.00", "Кафе/Досуг")
+    await _insert_expense(current_day(2), "950.00", "Еда вне дома")
     await _insert_expense(current_day(3), "2500.00", "Жильё")
-    await _insert_expense(current_day(4), "650.00", "Долги")
+    await _insert_expense(current_day(4), "650.00", "Финансовые обязательства")
     await _insert_expense(current_day(5), "300.00", None)
     await queries.insert_operation(
-        current_day(0), "перевод", Decimal("999.00"), "Продукты",
+        current_day(0), "перевод", Decimal("999.00"), "Еда дома",
         "mock transfer, excluded", "Mock-карта", "mock-db", False,
         transfer_direction="out",
     )
     deleted_id = await queries.insert_operation(
-        current_day(0), "расход", Decimal("500.00"), "Продукты",
+        current_day(0), "расход", Decimal("500.00"), "Еда дома",
         "mock soft-deleted expense", "Mock-карта", "mock-db", False,
     )
     await queries.soft_delete_operation(deleted_id)
@@ -131,11 +131,11 @@ async def _seed(today: date) -> None:
         "mock income", "Mock-карта", "mock-db", False,
     )
 
-    await _insert_expense(previous_start + timedelta(days=1), "2800.00", "Продукты")
+    await _insert_expense(previous_start + timedelta(days=1), "2800.00", "Еда дома")
     await _insert_expense(previous_start + timedelta(days=2), "600.00", "Транспорт")
-    await _insert_expense(previous_start + timedelta(days=3), "400.00", "Кафе/Досуг")
+    await _insert_expense(previous_start + timedelta(days=3), "400.00", "Еда вне дома")
     await _insert_expense(previous_start + timedelta(days=4), "2300.00", "Жильё")
-    await _insert_expense(previous_start + timedelta(days=5), "500.00", "Долги")
+    await _insert_expense(previous_start + timedelta(days=5), "500.00", "Финансовые обязательства")
     await _insert_expense(previous_start + timedelta(days=6), "150.00", None)
 
     # Внутренняя метка: mock_tma_server откажется раздавать базу без неё.

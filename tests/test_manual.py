@@ -30,14 +30,14 @@ def test_manual_date_parser_is_deterministic():
 
 def test_manual_brief_extracts_known_fields_without_llm():
     draft = parse_manual_brief(
-        "расход 850 Продукты вчера карта, комментарий: ужин",
+        "расход 850 Еда дома вчера карта, комментарий: ужин",
         date(2026, 9, 17),
     )
 
     assert draft == {
         "type": "расход",
         "amount": "850",
-        "category": "Продукты",
+        "category": "Еда дома",
         "op_date": "2026-09-16",
         "account": "карта",
         "comment": "ужин",
@@ -57,12 +57,12 @@ async def test_manual_capture_session_round_trip(sqlite_database):
     await queries.save_manual_capture_session(
         1,
         "amount",
-        {"type": "расход", "category": "Продукты"},
+        {"type": "расход", "category": "Еда дома"},
     )
     session = await queries.get_manual_capture_session(1)
     assert session is not None
     assert session["step"] == "amount"
-    assert session["draft"] == {"type": "расход", "category": "Продукты"}
+    assert session["draft"] == {"type": "расход", "category": "Еда дома"}
 
     await queries.save_manual_capture_session(
         1,

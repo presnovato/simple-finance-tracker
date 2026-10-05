@@ -24,7 +24,7 @@ async def _insert_expense(
     amount: str,
     *,
     op_date: date = date(2026, 7, 26),
-    category: str = "Продукты",
+    category: str = "Еда дома",
     comment: str = "продукты",
     needs_review: bool = False,
 ) -> int:
@@ -56,7 +56,7 @@ async def test_operation_round_trip_preserves_public_types(sqlite_database):
 
 
 async def test_aggregates_and_daily_dates_keep_contract(sqlite_database):
-    await _insert_expense("540.10", category="Продукты")
+    await _insert_expense("540.10", category="Еда дома")
     await _insert_expense("59.90", category="Транспорт")
     await queries.insert_operation(
         date(2026, 7, 26),
@@ -93,9 +93,9 @@ async def test_aggregates_and_daily_dates_keep_contract(sqlite_database):
 
 async def test_rhythm_day_queries_exclude_fixed_categories_and_salary(sqlite_database):
     op_date = date(2026, 7, 26)
-    await _insert_expense("100", op_date=op_date, category="Продукты")
+    await _insert_expense("100", op_date=op_date, category="Еда дома")
     await _insert_expense("200", op_date=op_date, category="Жильё")
-    await _insert_expense("300", op_date=op_date, category="Долги")
+    await _insert_expense("300", op_date=op_date, category="Финансовые обязательства")
     await queries.insert_operation(
         op_date,
         "доход",
@@ -169,7 +169,7 @@ async def test_period_aggregates_start_after_balance_anchor_timestamp(sqlite_dat
     )
 
     assert totals["expense"] == Decimal("400.00")
-    assert categories == [{"category": "Продукты", "total": Decimal("400.00")}]
+    assert categories == [{"category": "Еда дома", "total": Decimal("400.00")}]
     assert days == [
         {"op_date": anchor_date, "total": Decimal("300.00")},
         {"op_date": date(2026, 7, 27), "total": Decimal("100.00")},
@@ -283,7 +283,7 @@ async def test_soft_delete_excludes_and_restore_returns_operation(
         "transfer_out": Decimal("0.00"),
     }
     assert await queries.find_possible_duplicates(
-        date(2026, 7, 26), Decimal("540"), "расход", "Продукты"
+        date(2026, 7, 26), Decimal("540"), "расход", "Еда дома"
     ) is None
 
     restored = await queries.restore_operation(op_id)
@@ -314,7 +314,7 @@ async def test_debt_payment_is_idempotent_and_closes_debt(sqlite_database):
         priority=1,
         due_date=None,
     )
-    operation_id = await _insert_expense("100", category="Долги")
+    operation_id = await _insert_expense("100", category="Финансовые обязательства")
 
     first = await queries.record_debt_payment(
         debt["id"], operation_id, date(2026, 7, 26), Decimal("100"),
@@ -360,7 +360,7 @@ async def test_tma_debt_payment_is_atomic_idempotent_and_rejects_overpay(
     assert len(await queries.debt_payment_history(debt["id"])) == 1
     operations = await queries.list_operations(op_date=date(2026, 7, 26))
     assert len(operations) == 1
-    assert operations[0]["category"] == "Долги"
+    assert operations[0]["category"] == "Финансовые обязательства"
 
     with pytest.raises(queries.DebtPaymentError, match="больше остатка"):
         await queries.create_debt_payment(
@@ -680,7 +680,7 @@ async def test_remaining_query_surface_and_pragmas(sqlite_database):
         comment="до зарплаты",
         operation_id=None,
     )
-    payment_operation_id = await _insert_expense("25", category="Долги")
+    payment_operation_id = await _insert_expense("25", category="Финансовые обязательства")
     paid = await queries.record_personal_debt_payment(
         personal["id"],
         payment_operation_id,
@@ -1042,6 +1042,7 @@ async def test_schema_migration_history_is_recorded(sqlite_database):
         {"version": 7, "name": "nullable_weekly_budget_limits"},
         {"version": 8, "name": "manual_capture_sessions"},
         {"version": 9, "name": "source_idempotency"},
+        {"version": 10, "name": "balance_snapshots"},
     ]
 
 

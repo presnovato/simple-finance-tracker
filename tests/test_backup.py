@@ -50,7 +50,7 @@ async def _insert_expense(amount: str = "100") -> int:
         date(2026, 9, 24),
         "расход",
         Decimal(amount),
-        "Продукты",
+        "Еда дома",
         "тест",
         "Карта",
         "text",

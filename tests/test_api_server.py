@@ -82,15 +82,23 @@ async def test_health_degraded_when_scheduler_not_running(monkeypatch):
         await client.close()
 
 
-async def test_authenticator_is_replaceable():
+async def test_authenticator_is_replaceable(monkeypatch):
+    async def archived(_active):
+        return ["Продукты"]
+
+    monkeypatch.setattr(
+        "finance_bot.database.queries.archived_expense_categories", archived
+    )
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:
         response = await client.get("/api/categories")
         assert response.status == 200
         payload = await response.json()
-        assert "Продукты" in payload["expense"]
-        assert "Долги" in payload["expense"]
+        assert "Еда дома" in payload["expense"]
+        assert "Жильё" in payload["expense"]
+        assert "Быт" in payload["expense"]
+        assert payload["archived_expense"] == ["Продукты"]
     finally:
         await client.close()
 
@@ -106,7 +114,7 @@ async def test_manual_operation_create_route_validates_and_serializes(monkeypatc
             "op_date": date(2026, 9, 16),
             "type": "расход",
             "amount": Decimal("1250.50"),
-            "category": "Продукты",
+            "category": "Еда дома",
             "comment": "рынок",
             "note": None,
             "account": None,
@@ -128,7 +136,7 @@ async def test_manual_operation_create_route_validates_and_serializes(monkeypatc
             json={
                 "type": "расход",
                 "amount": "1250.50",
-                "category": "Продукты",
+                "category": "Еда дома",
                 "op_date": "2026-09-16",
                 "comment": "рынок",
             },
@@ -138,7 +146,7 @@ async def test_manual_operation_create_route_validates_and_serializes(monkeypatc
         assert calls["fields"] == {
             "type_": "расход",
             "amount": Decimal("1250.50"),
-            "category": "Продукты",
+            "category": "Еда дома",
             "op_date": date(2026, 9, 16),
             "comment": "рынок",
             "account": None,
@@ -436,12 +444,16 @@ async def test_summary_includes_transfer_balance_without_smoothing(monkeypatch):
         ]
 
     async def expenses_by_category(_start, _end):
-        return [{"category": "Продукты", "total": Decimal("30")}]
+        return [{"category": "Еда дома", "total": Decimal("30")}]
+
+    async def needs_review_count():
+        return 0
 
     monkeypatch.setattr("finance_bot.database.queries.totals", totals)
     monkeypatch.setattr("finance_bot.database.queries.expenses_by_day", expenses_by_day)
     monkeypatch.setattr("finance_bot.database.queries.income_by_day", income_by_day)
     monkeypatch.setattr("finance_bot.database.queries.expenses_by_category", expenses_by_category)
+    monkeypatch.setattr("finance_bot.database.queries.needs_review_count", needs_review_count)
     monkeypatch.setattr("finance_bot.api.routes.summary.balance_service.get_snapshot", no_snapshot)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
@@ -498,7 +510,7 @@ async def test_summary_uses_balance_anchor_period_and_exact_same_day_boundary(mo
 
     async def expenses_by_category(start, end, *, start_ts):
         calls["categories"] = (start, end, start_ts)
-        return [{"category": "Продукты", "total": Decimal("30")}]
+        return [{"category": "Еда дома", "total": Decimal("30")}]
 
     monkeypatch.setattr("finance_bot.api.routes.summary.effective_today", lambda: date(2026, 9, 10))
     monkeypatch.setattr("finance_bot.api.routes.summary.balance_service.get_snapshot", snapshot)
@@ -506,6 +518,11 @@ async def test_summary_uses_balance_anchor_period_and_exact_same_day_boundary(mo
     monkeypatch.setattr("finance_bot.database.queries.expenses_by_day", expenses_by_day)
     monkeypatch.setattr("finance_bot.database.queries.income_by_day", income_by_day)
     monkeypatch.setattr("finance_bot.database.queries.expenses_by_category", expenses_by_category)
+
+    async def needs_review_count():
+        return 0
+
+    monkeypatch.setattr("finance_bot.database.queries.needs_review_count", needs_review_count)
     client = TestClient(TestServer(create_app(AllowAuthenticator())))
     await client.start_server()
     try:

@@ -54,7 +54,7 @@ def test_crypto_overview_patch_accepts_only_boolean_visibility():
 
 def test_transfer_patch_clears_category_and_any_patch_is_validated():
     current = {"type": "расход"}
-    assert operation_patch({"type": "перевод", "category": "Продукты"}, current) == {
+    assert operation_patch({"type": "перевод", "category": "Еда дома"}, current) == {
         "type": "перевод", "category": None, "transfer_direction": "out",
     }
     assert operation_patch({"transfer_direction": "in"}, {"type": "перевод"}) == {
@@ -74,13 +74,13 @@ def test_operation_create_requires_manual_fields_and_normalizes_transfers():
     assert operation_create({
         "type": "расход",
         "amount": "1250,50".replace(",", "."),
-        "category": "Продукты",
+        "category": "Еда дома",
         "op_date": "2026-09-16",
         "comment": "рынок",
     }, today) == {
         "type_": "расход",
         "amount": Decimal("1250.50"),
-        "category": "Продукты",
+        "category": "Еда дома",
         "op_date": date(2026, 9, 16),
         "comment": "рынок",
         "account": None,
@@ -95,15 +95,15 @@ def test_operation_create_requires_manual_fields_and_normalizes_transfers():
         operation_create({"type": "расход", "amount": "500"}, today)
     with pytest.raises(ValidationError):
         operation_create({
-            "type": "доход", "amount": "500", "category": "Продукты",
+            "type": "доход", "amount": "500", "category": "Еда дома",
         }, today)
     with pytest.raises(ValidationError):
         operation_create({
-            "type": "перевод", "amount": "500", "category": "Продукты",
+            "type": "перевод", "amount": "500", "category": "Еда дома",
         }, today)
     with pytest.raises(ValidationError):
         operation_create({
-            "type": "расход", "amount": "500", "category": "Продукты",
+            "type": "расход", "amount": "500", "category": "Еда дома",
             "op_date": "2026-09-18",
         }, today)
 

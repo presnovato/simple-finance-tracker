@@ -3,6 +3,7 @@
 from aiohttp import web
 
 from . import (
+    analytics,
     balance,
     budget,
     categories,
@@ -13,12 +14,15 @@ from . import (
     personal_debts,
     subscriptions,
     summary,
+    upcoming,
 )
 
 
 def setup_routes(app: web.Application) -> None:
     integrations.register(app)
     summary.register(app)
+    upcoming.register(app)
+    analytics.register(app)
     budget.register(app)
     operations.register(app)
     crypto.register(app)

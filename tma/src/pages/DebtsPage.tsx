@@ -28,6 +28,7 @@ import {
   deletePersonalDebt,
 } from '../api'
 import { ConfirmSheet } from '../components/ConfirmSheet'
+import { PageLoading } from '../components/PageState'
 import { formatMoney, shiftMonth, todayMonth } from '../format'
 import { haptic } from '../telegram'
 import type {
@@ -37,6 +38,7 @@ import type {
   PersonalDebt,
   PersonalDebtDirection,
   PersonalDebtPage,
+  UpcomingFocus,
 } from '../types'
 import { AdjustForm } from './debts/AdjustForm'
 import { ArchiveForm } from './debts/ArchiveForm'
@@ -68,9 +70,10 @@ import {
   rejectedMessages,
   targetTitle,
 } from './debts/debtHelpers'
+import { resolveUpcomingFocus } from './upcomingFocus'
 
 
-export function DebtsPage() {
+export function DebtsPage({ focus }: { focus?: UpcomingFocus | null }) {
   const [activeCredits, setActiveCredits] = useState<Debt[]>([])
   const [closedCredits, setClosedCredits] = useState<Debt[]>([])
   const [archivedCredits, setArchivedCredits] = useState<Debt[]>([])
@@ -100,6 +103,9 @@ export function DebtsPage() {
   const [sectionErrors, setSectionErrors] = useState<Partial<Record<DebtLoadSection, string>>>({})
   const [actionError, setActionError] = useState('')
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
+  const [highlightId, setHighlightId] = useState<number | null>(null)
+  const handledFocus = useRef(0)
+  const highlightTimer = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     const version = requestVersion.current + 1
@@ -166,8 +172,37 @@ export function DebtsPage() {
 
   useEffect(() => { void load() }, [load])
 
+  useEffect(() => {
+    const resolution = resolveUpcomingFocus(
+      focus,
+      'debt',
+      handledFocus.current,
+      !loading,
+      activeCredits.map((debt) => debt.id),
+    )
+    if (resolution.status === 'ignore' || resolution.status === 'wait') return
+    handledFocus.current = resolution.focus.nonce
+    if (resolution.status === 'missing') {
+      setActionError('Кредит недоступен')
+      return
+    }
+    const target = activeCredits.find((debt) => debt.id === resolution.focus.id)
+    if (!target) return
+    setCreditScope('active')
+    setHighlightId(target.id)
+    window.setTimeout(() => {
+      document.getElementById(`debt-card-${target.id}`)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      })
+    }, 0)
+    if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current)
+    highlightTimer.current = window.setTimeout(() => setHighlightId(null), 2500)
+  }, [focus, loading, activeCredits])
+
   useEffect(() => () => {
     if (sheetSwitchTimer.current !== null) window.clearTimeout(sheetSwitchTimer.current)
+    if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current)
   }, [])
 
   const debts = creditScope === 'active'
@@ -271,8 +306,16 @@ export function DebtsPage() {
       </header>
 
       {actionError && <TKNoticeBar tone="red">Не удалось выполнить действие: {actionError}</TKNoticeBar>}
+      {(sectionErrors.credits || sectionErrors.summary || sectionErrors.personal) && (
+        <TKNoticeBar
+          tone="orange"
+          action={<TKButton size="sm" variant="plain" onClick={refresh}>Повторить</TKButton>}
+        >
+          Часть данных не загрузилась
+        </TKNoticeBar>
+      )}
       {initialLoading ? (
-        <div className="debts-loader"><TKSpinner label="Собираю долги" /></div>
+        <PageLoading label="Собираю долги" />
       ) : (
         <>
           <section className="debt-section" aria-labelledby="credits-heading">
@@ -357,13 +400,18 @@ export function DebtsPage() {
 
                 <div className="credit-grid">
                   {debts.map((debt) => (
-                    <CreditCard
+                    <div
                       key={debt.id}
-                      debt={debt}
-                      onPay={() => setPaying({ kind: 'credit', debt })}
-                      onMore={() => setActions({ kind: 'credit', debt })}
-                      onRestore={() => void runAction(() => archiveDebt(debt.id, false))}
-                    />
+                      id={`debt-card-${debt.id}`}
+                      className={highlightId === debt.id ? 'debt-highlight' : undefined}
+                    >
+                      <CreditCard
+                        debt={debt}
+                        onPay={() => setPaying({ kind: 'credit', debt })}
+                        onMore={() => setActions({ kind: 'credit', debt })}
+                        onRestore={() => void runAction(() => archiveDebt(debt.id, false))}
+                      />
+                    </div>
                   ))}
                 </div>
                 {!debts.length && (

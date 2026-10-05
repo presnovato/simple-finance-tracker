@@ -21,18 +21,18 @@ def test_plain_json():
 
 
 def test_markdown_fence():
-    raw = '```json\n{"type": "расход", "amount": 200, "category": "Продукты"}\n```'
+    raw = '```json\n{"type": "расход", "amount": 200, "category": "Еда дома"}\n```'
     op = parse_llm_response(raw, TODAY)
     assert op["amount"] == Decimal("200")
     assert op["date"] == TODAY  # даты нет → сегодня
 
 
 def test_output_wrapper_and_array_values():
-    raw = '{"output": {"type": ["расход"], "amount": "779,96", "category": ["Продукты"]}}'
+    raw = '{"output": {"type": ["расход"], "amount": "779,96", "category": ["Еда дома"]}}'
     op = parse_llm_response(raw, TODAY)
     assert op["type"] == "расход"
     assert op["amount"] == Decimal("779.96")
-    assert op["category"] == "Продукты"
+    assert op["category"] == "Еда дома"
 
 
 def test_amount_with_spaces():
@@ -114,10 +114,10 @@ def test_many_parser_accepts_array():
 
 
 def test_many_parser_normalizes_single_object():
-    raw = '{"type":"расход","amount":200,"category":"Продукты"}'
+    raw = '{"type":"расход","amount":200,"category":"Еда дома"}'
     operations = parse_llm_response_many(raw, TODAY)
     assert len(operations) == 1
-    assert operations[0]["category"] == "Продукты"
+    assert operations[0]["category"] == "Еда дома"
 
 
 def test_many_parser_garbage_returns_empty_list():
@@ -181,9 +181,9 @@ def test_unknown_expense_category_becomes_other_with_review():
 
 def test_category_matching_is_case_and_space_insensitive():
     op = parse_llm_response(
-        '{"type":"расход","amount":100,"category":"  продукты "}', TODAY
+        '{"type":"расход","amount":100,"category":"  еда дома "}', TODAY
     )
-    assert op["category"] == "Продукты"
+    assert op["category"] == "Еда дома"
     assert op["needs_review"] is False
 
 

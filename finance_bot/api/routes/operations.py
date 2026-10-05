@@ -23,6 +23,7 @@ async def operations(request: web.Request) -> web.Response:
         if type_ is not None and type_ not in OPERATION_TYPES:
             raise schemas.ValidationError("неизвестный тип операции")
         needs_review = schemas.query_bool(request.query.get("needs_review"))
+        category_null = schemas.query_bool(request.query.get("category_null"))
         date_filter = schemas.iso_date(request.query["date"]) \
             if request.query.get("date") else None
         date_from = schemas.iso_date(request.query["date_from"]) \
@@ -35,10 +36,16 @@ async def operations(request: web.Request) -> web.Response:
         return _error(str(exc))
 
     category = request.query.get("category") or None
+    if category == "Без категории":
+        # Отображаемое имя NULL — не категория; фильтруем отдельным признаком.
+        category = None
+        if category_null is None:
+            category_null = True
     query = (request.query.get("q") or "").strip()[:100] or None
     rows = await queries.list_operations(
         before=before,
         category=category,
+        category_null=category_null,
         type_=type_,
         query=query,
         needs_review=needs_review,
@@ -53,6 +60,7 @@ async def operations(request: web.Request) -> web.Response:
         if has_more and rows else None
     totals = await queries.operations_totals(
         category=category,
+        category_null=category_null,
         type_=type_,
         query=query,
         needs_review=needs_review,

@@ -12,24 +12,29 @@ from finance_bot.config import ALLOWED_USER_ID, TMA_URL
 logger = logging.getLogger(__name__)
 
 
-def _web_app_url(tab: str | None = None) -> str:
+def _web_app_url(tab: str | None = None, *, review: bool = False) -> str:
     if not tab:
         return TMA_URL
     parts = urlsplit(TMA_URL)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     query["tab"] = tab
+    if review:
+        query["review"] = "1"
     return urlunsplit((parts.scheme, parts.netloc, parts.path,
                        urlencode(query), parts.fragment))
 
 
 def web_app_markup(
-    text: str = "Открыть дашборд", *, tab: str | None = None
+    text: str = "Открыть дашборд",
+    *,
+    tab: str | None = None,
+    review: bool = False,
 ) -> InlineKeyboardMarkup | None:
     if not TMA_URL:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text=f"📊 {text}", web_app=WebAppInfo(url=_web_app_url(tab))
+            text=f"📊 {text}", web_app=WebAppInfo(url=_web_app_url(tab, review=review))
         )
     ]])
 

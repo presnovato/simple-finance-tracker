@@ -14,21 +14,19 @@ from finance_bot.config import (
 from finance_bot.database import connection
 from finance_bot.handlers import (
     backup, budget, capture, dashboard, debts, edit, errors, export, manual, notes,
-    settings, start, subscriptions,
+    review, settings, start, subscriptions,
 )
 from finance_bot.handlers.access import OwnerOnlyMiddleware
+from finance_bot.logging_setup import configure_logging
 from finance_bot.services import bundle, llm, scheduler
 from finance_bot.services import watchdog as watchdog_service
 from finance_bot.webapp import configure_menu_button
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
+    configure_logging()
     problems = validate_config()
     if problems:
         raise RuntimeError(
@@ -68,6 +66,7 @@ async def main() -> None:
         dp.include_router(debts.router)
         dp.include_router(export.router)
         dp.include_router(subscriptions.router)
+        dp.include_router(review.router)
         dp.include_router(edit.router)
         dp.include_router(budget.router)
         dp.include_router(backup.router)

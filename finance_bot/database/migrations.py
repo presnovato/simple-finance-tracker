@@ -300,6 +300,20 @@ async def _migrate_source_idempotency(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def _migrate_balance_snapshots(conn: aiosqlite.Connection) -> None:
+    """Таблица дневных снимков «денег на руках» (spec 06)."""
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS balance_snapshots (
+          snapshot_date TEXT PRIMARY KEY,
+          amount        INTEGER NOT NULL,
+          created_at    TEXT NOT NULL
+                        DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))
+        )
+        """
+    )
+
+
 _MIGRATIONS = (
     (1, "legacy_columns", _migrate_legacy_columns),
     (2, "indexes_after_columns", _migrate_indexes),
@@ -310,6 +324,7 @@ _MIGRATIONS = (
     (7, "nullable_weekly_budget_limits", _migrate_nullable_weekly_budget_limits),
     (8, "manual_capture_sessions", _migrate_manual_capture_sessions),
     (9, "source_idempotency", _migrate_source_idempotency),
+    (10, "balance_snapshots", _migrate_balance_snapshots),
 )
 
 

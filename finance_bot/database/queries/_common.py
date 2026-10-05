@@ -32,7 +32,7 @@ MONEY_COLUMNS = {
 RATE_COLUMNS = {"rate"}
 DATE_COLUMNS = {
     "op_date", "pay_date", "due_date", "opened_at", "next_payment_date",
-    "anchor_date", "next_charge", "week_start", "week_end",
+    "anchor_date", "next_charge", "week_start", "week_end", "snapshot_date",
 }
 TS_COLUMNS = {"created_at", "deleted_at", "updated_at"}
 BOOL_COLUMNS = {"needs_review", "archived"}

@@ -63,6 +63,7 @@ async def summary(request: web.Request) -> web.Response:
     )
     average = average_daily(chart_expense_total, len(day_rows))
     average_income = average_daily(chart_income_total, len(income_day_rows))
+    review_count = await queries.needs_review_count()
     balance = calculate_period_balance(
         totals["income"],
         totals["expense"],
@@ -87,6 +88,7 @@ async def summary(request: web.Request) -> web.Response:
         "balance": schemas.money_string(balance),
         "average_daily": schemas.money_string(average),
         "average_daily_income": schemas.money_string(average_income),
+        "review_count": review_count,
         "days": [
             {
                 "op_date": expense_row["op_date"].isoformat(),

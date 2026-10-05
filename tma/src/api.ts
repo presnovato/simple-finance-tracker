@@ -75,6 +75,22 @@ export function getBudget(weekStart?: string): Promise<BudgetResponse> {
   return api<BudgetResponse>(`/api/budget${queryString({ week_start: weekStart })}`)
 }
 
+export function getUpcoming(): Promise<import('./types').UpcomingResponse> {
+  return api<import('./types').UpcomingResponse>('/api/upcoming')
+}
+
+export function getCategoryComparison(month: string) {
+  return api<import('./types').CategoryComparisonResponse>(
+    `/api/analytics/categories${queryString({ month })}`,
+  )
+}
+
+export function getBalanceHistory(dateFrom: string, dateTo: string) {
+  return api<import('./types').BalanceHistoryResponse>(
+    `/api/balance/history${queryString({ date_from: dateFrom, date_to: dateTo })}`,
+  )
+}
+
 export function getBudgetSettings(): Promise<BudgetSettings> {
   return api<BudgetSettings>('/api/budget/settings')
 }

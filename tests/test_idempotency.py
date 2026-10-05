@@ -52,7 +52,7 @@ async def _noop(*_args, **_kwargs):
 
 def _parsed(
     amount: str = "100",
-    category: str = "Продукты",
+    category: str = "Еда дома",
     op_date: date = date(2026, 9, 24),
 ) -> dict:
     return {
@@ -98,7 +98,7 @@ async def test_soft_deleted_operation_still_blocks_reinsertion(
 async def test_duplicate_heuristic_matrix(sqlite_database):
     today = date(2026, 9, 24)
     op_id = await queries.insert_operation(
-        today, "расход", Decimal("250"), "Продукты", "кофе", "Карта",
+        today, "расход", Decimal("250"), "Еда дома", "кофе", "Карта",
         "text", False,
     )
 
@@ -114,15 +114,15 @@ async def test_duplicate_heuristic_matrix(sqlite_database):
         op_id,
     )
     assert await queries.find_possible_duplicates(
-        today, Decimal("250"), "расход", "Продукты"
+        today, Decimal("250"), "расход", "Еда дома"
     ) == op_id
 
     # негативы
     assert await queries.find_possible_duplicates(
-        today, Decimal("999"), "расход", "Продукты"
+        today, Decimal("999"), "расход", "Еда дома"
     ) is None
     assert await queries.find_possible_duplicates(
-        today, Decimal("250"), "доход", "Продукты"
+        today, Decimal("250"), "доход", "Еда дома"
     ) is None
     assert await queries.find_possible_duplicates(
         today, Decimal("250"), "расход", "Другое"
@@ -135,7 +135,7 @@ async def test_batch_with_half_suspected_asks_before_saving(
     monkeypatch.setattr(capture.budget_service, "notify_after_new_expense", _noop)
     today = date(2026, 9, 24)
     await queries.insert_operation(
-        today, "расход", Decimal("100"), "Продукты", "x", "Карта", "text", False
+        today, "расход", Decimal("100"), "Еда дома", "x", "Карта", "text", False
     )
     items = [_parsed("100"), _parsed("100")]
     message = FakeMessage(message_id=50)
@@ -152,7 +152,7 @@ async def test_batch_below_half_saves_and_marks_suspected(
     monkeypatch.setattr(capture.budget_service, "notify_after_new_expense", _noop)
     today = date(2026, 9, 24)
     await queries.insert_operation(
-        today, "расход", Decimal("100"), "Продукты", "x", "Карта", "text", False
+        today, "расход", Decimal("100"), "Еда дома", "x", "Карта", "text", False
     )
     items = [
         _parsed("100"),
@@ -173,7 +173,7 @@ async def test_api_idempotency_key_returns_stored_response(sqlite_database):
     body = {
         "type": "расход",
         "amount": "100",
-        "category": "Продукты",
+        "category": "Еда дома",
         "op_date": "2026-09-24",
     }
     try:

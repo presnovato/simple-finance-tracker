@@ -1,31 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   TKButton,
-  TKCell,
   TKChip,
-  TKEmptyState,
-  TKInput,
-  TKListGroup,
-  TKNativeField,
   TKNoticeBar,
   TKSearch,
   TKSegmented,
-  TKSelect,
   TKSheet,
-  TKSpinner,
-  TKTextarea,
 } from 'tg-mini-app-uikit'
 
-import { api, createOperation, queryString, submissionKey } from '../api'
-import type { SubmissionKey } from '../api'
-import { formatDay, formatMoney } from '../format'
-import {
-  buildOperationCreatePayload,
-  buildOperationPatch,
-  emptyOperationForm,
-  formFromOperation,
-  validateOperationForm,
-} from '../operationForm'
+import { api, queryString } from '../api'
+import { PageError } from '../components/PageState'
+import { formatDay } from '../format'
 import { haptic } from '../telegram'
 import type {
   Categories,
@@ -33,16 +18,15 @@ import type {
   Operation,
   OperationPage,
   OperationType,
-  TransferDirection,
 } from '../types'
+import { HistoryFilterSheets } from './history/HistoryFilterSheets'
+import { HistoryGroups } from './history/HistoryGroups'
+import { OperationEditor } from './history/OperationEditor'
 
 interface Props {
   preset: HistoryPreset
   presetVersion: number
 }
-
-const EXPENSE = '#ff7f8e'
-const INCOME = '#77e6b6'
 
 const TYPE_OPTIONS = [
   { value: '', label: 'Все' },
@@ -53,8 +37,9 @@ const TYPE_OPTIONS = [
 
 export function HistoryPage({ preset, presetVersion }: Props) {
   const [items, setItems] = useState<Operation[]>([])
-  const [categories, setCategories] = useState<Categories>({ expense: [], income: [] })
+  const [categories, setCategories] = useState<Categories>({ expense: [], income: [], archived_expense: [] })
   const [category, setCategory] = useState('')
+  const [categoryNull, setCategoryNull] = useState(false)
   const [type, setType] = useState<OperationType | ''>('')
   const [date, setDate] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -82,11 +67,19 @@ export function HistoryPage({ preset, presetVersion }: Props) {
   }, [])
 
   useEffect(() => {
-    setCategory(preset.category || '')
+    const presetCategory = preset.category || ''
+    if (presetCategory === 'Без категории') {
+      setCategory('')
+      setCategoryNull(true)
+    } else {
+      setCategory(presetCategory)
+      setCategoryNull(false)
+    }
     setDate(preset.date || '')
     setDateFrom(preset.date_from || '')
     setDateTo(preset.date_to || '')
-  }, [presetVersion, preset.category, preset.date, preset.date_from, preset.date_to])
+    setNeedsReview(Boolean(preset.needs_review))
+  }, [presetVersion, preset.category, preset.date, preset.date_from, preset.date_to, preset.needs_review])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300)
@@ -95,13 +88,14 @@ export function HistoryPage({ preset, presetVersion }: Props) {
 
   const filterQuery = useMemo(() => ({
     category: category || undefined,
+    category_null: categoryNull ? true : undefined,
     type: type || undefined,
     date: date || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
     q: search || undefined,
     needs_review: needsReview ? true : undefined,
-  }), [category, type, date, dateFrom, dateTo, search, needsReview])
+  }), [category, categoryNull, type, date, dateFrom, dateTo, search, needsReview])
 
   useEffect(() => {
     const version = ++requestVersion.current
@@ -129,7 +123,7 @@ export function HistoryPage({ preset, presetVersion }: Props) {
       setItems((current) => {
         const known = new Set(current.map((item) => item.id))
         return [...current, ...page.items.filter((item) => !known.has(item.id))]
-          .sort(compareOperations)
+          .sort((left, right) => right.op_date.localeCompare(left.op_date) || right.id - left.id)
       })
       setCursor(page.next_cursor)
     } catch (reason) {
@@ -157,14 +151,6 @@ export function HistoryPage({ preset, presetVersion }: Props) {
   useEffect(() => () => {
     if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
   }, [])
-
-  const groups = useMemo(() => {
-    const grouped = new Map<string, Operation[]>()
-    for (const item of [...items].sort(compareOperations)) {
-      grouped.set(item.op_date, [...(grouped.get(item.op_date) || []), item])
-    }
-    return [...grouped.entries()]
-  }, [items])
 
   const refreshHistory = () => {
     requestVersion.current += 1
@@ -217,6 +203,7 @@ export function HistoryPage({ preset, presetVersion }: Props) {
 
   const clearFilters = () => {
     setCategory('')
+    setCategoryNull(false)
     setType('')
     setDate('')
     setDateFrom('')
@@ -226,7 +213,7 @@ export function HistoryPage({ preset, presetVersion }: Props) {
     setSearch('')
   }
   const hasFilters = Boolean(
-    category || type || date || dateFrom || dateTo || needsReview || searchInput,
+    category || categoryNull || type || date || dateFrom || dateTo || needsReview || searchInput,
   )
 
   const openPeriodSheet = () => {
@@ -253,8 +240,11 @@ export function HistoryPage({ preset, presetVersion }: Props) {
   }
 
   const categoryChips = [
-    ...categories.expense,
-    ...categories.income.filter((item) => !categories.expense.includes(item)),
+    ...categories.expense.map((value) => ({ value, label: value })),
+    ...categories.archived_expense.map((value) => ({ value, label: `${value} · архив` })),
+    ...categories.income
+      .filter((item) => !categories.expense.includes(item) && !categories.archived_expense.includes(item))
+      .map((value) => ({ value, label: value })),
   ]
   const periodLabel = dateFrom || dateTo
     ? `${formatDay(dateFrom || dateTo)}${dateFrom && dateTo ? ` — ${formatDay(dateTo)}` : ''}`
@@ -263,6 +253,7 @@ export function HistoryPage({ preset, presetVersion }: Props) {
     + Number(Boolean(dateFrom || dateTo))
     + Number(Boolean(date))
     + Number(Boolean(category))
+    + Number(categoryNull)
 
   return (
     <div className="page history-page">
@@ -328,161 +319,56 @@ export function HistoryPage({ preset, presetVersion }: Props) {
                 {category}
               </TKChip>
             )}
-          </div>
-        )}
-      </div>
-
-      {error && <TKNoticeBar tone="red">{error}</TKNoticeBar>}
-
-      <div className="history-groups">
-        {groups.map(([opDate, operations]) => {
-          const dayTotals = calculateDayTotals(operations)
-          const dayNet = dayTotals.income - dayTotals.expense
-          return (
-            <div className="history-group" key={opDate}>
-              <TKListGroup
-                separatorInset={16}
-                title={(
-                  <span className="history-day-title">
-                    <strong>{formatDay(opDate)}</strong>
-                    <span className={`history-day-net ${dayNet > 0 ? 'positive' : dayNet < 0 ? 'negative' : ''}`}>
-                      {formatDayNet(dayNet)}
-                    </span>
-                  </span>
-                )}
-              >
-                {operations.map((operation) => {
-                  const sign = operation.type === 'расход'
-                    ? '−'
-                    : operation.type === 'доход'
-                      ? '+'
-                      : operation.transfer_direction === 'in' ? '+' : ''
-                  const color = operation.type === 'расход' ? EXPENSE : operation.type === 'доход' ? INCOME : 'var(--tk-text-2)'
-                  const transferLabel = operation.type === 'перевод' && operation.transfer_direction === 'self'
-                    ? 'между своими'
-                    : null
-                  return (
-                    <div key={operation.id}>
-                      <TKCell
-                        className={`operation-cell${operation.needs_review ? ' needs-review' : ''}`}
-                        title={operation.comment || operation.category || 'Без описания'}
-                        subtitle={[operation.note ? '📝' : null, operation.category, transferLabel, operation.type].filter(Boolean).join(' · ')}
-                        onClick={() => setEditing(operation)}
-                        value={<b className={`operation-amount ${operation.type}`}>{sign}{formatMoney(operation.amount)}</b>}
-                      />
-                    </div>
-                  )
-                })}
-              </TKListGroup>
-            </div>
-          )
-        })}
-
-        {!loading && !items.length && (
-          <TKEmptyState
-            title={hasFilters ? 'Ничего не найдено' : 'История пока пуста'}
-            text={hasFilters ? 'Измени или сбрось фильтры.' : 'Добавь первую операцию кнопкой выше или через бота.'}
-          />
-        )}
-
-        <div ref={sentinel} className="load-sentinel">
-          {loading ? <TKSpinner label="Загружаю" /> : cursor ? null : items.length ? (
-            <span className="load-end-label">Это вся история</span>
-          ) : null}
-        </div>
-      </div>
-
-      <TKSheet
-        open={filterSheetOpen}
-        onClose={() => setFilterSheetOpen(false)}
-        title="Фильтры истории"
-      >
-        <div className="history-filter-sheet">
-          <section className="history-filter-section">
-            <div className="history-filter-section-heading">
-              <strong>Период</strong>
-              <span>{periodLabel || (date ? `День ${formatDay(date)}` : 'Любой')}</span>
-            </div>
-            <TKButton
-              full
-              variant="tonal"
-              onClick={() => {
-                setFilterSheetOpen(false)
-                openPeriodSheet()
-              }}
-            >
-              {periodLabel ? `Изменить: ${periodLabel}` : 'Выбрать период'}
-            </TKButton>
-            {date && (
-              <TKChip selected removable onClick={() => setDate('')} onRemove={() => setDate('')}>
-                День · {formatDay(date)}
+            {categoryNull && (
+              <TKChip selected removable onClick={() => setCategoryNull(false)} onRemove={() => setCategoryNull(false)}>
+                Без категории
               </TKChip>
             )}
-          </section>
-
-          <section className="history-filter-section">
-            <div className="history-filter-section-heading">
-              <strong>Категория</strong>
-              <span>{[needsReview ? 'На проверке' : null, category || null].filter(Boolean).join(' · ') || 'Любая'}</span>
-            </div>
-            <div className="history-category-options">
-              <TKChip selected={needsReview} onClick={() => setNeedsReview((value) => !value)}>
-                ⚠ Проверить
-              </TKChip>
-              {categoryChips.map((value) => (
-                <TKChip
-                  key={value}
-                  selected={category === value}
-                  onClick={() => setCategory(category === value ? '' : value)}
-                >
-                  {value}
-                </TKChip>
-              ))}
-            </div>
-          </section>
-
-          {activeFilterCount > 0 && (
-            <TKButton
-              full
-              variant="plain"
-              onClick={() => {
-                clearFilters()
-                setFilterSheetOpen(false)
-              }}
-            >
-              Сбросить фильтры
-            </TKButton>
-          )}
-        </div>
-      </TKSheet>
-
-      <TKSheet
-        open={periodSheetOpen}
-        onClose={() => setPeriodSheetOpen(false)}
-        title="Период истории"
-      >
-        <div className="history-period-form">
-          <div className="history-period-fields">
-            <TKNativeField
-              type="date"
-              label="От"
-              value={periodDraft.from}
-              onChange={(value) => setPeriodDraft((current) => ({ ...current, from: value }))}
-            />
-            <TKNativeField
-              type="date"
-              label="До"
-              value={periodDraft.to}
-              onChange={(value) => setPeriodDraft((current) => ({ ...current, to: value }))}
-            />
           </div>
-          {periodError && <TKNoticeBar tone="red">{periodError}</TKNoticeBar>}
-          <TKButton full variant="filled" onClick={applyPeriod}>Применить период</TKButton>
-          {(periodDraft.from || periodDraft.to) && (
-            <TKButton full variant="plain" onClick={clearPeriod}>Очистить период</TKButton>
-          )}
-        </div>
-      </TKSheet>
+        )}
+      </div>
+
+      {error && !items.length && (
+        <PageError message={error} onRetry={refreshHistory} />
+      )}
+      {error && items.length > 0 && <TKNoticeBar tone="red">{error}</TKNoticeBar>}
+
+      <HistoryGroups
+        items={items}
+        loading={loading}
+        cursor={cursor}
+        hasFilters={hasFilters}
+        onOpen={setEditing}
+        sentinelRef={sentinel}
+      />
+
+      <HistoryFilterSheets
+        filterOpen={filterSheetOpen}
+        periodOpen={periodSheetOpen}
+        category={category}
+        categoryNull={categoryNull}
+        date={date}
+        needsReview={needsReview}
+        categoryChips={categoryChips}
+        periodLabel={periodLabel}
+        periodDraft={periodDraft}
+        periodError={periodError}
+        activeFilterCount={activeFilterCount}
+        onCloseFilter={() => setFilterSheetOpen(false)}
+        onClosePeriod={() => setPeriodSheetOpen(false)}
+        onCategory={setCategory}
+        onToggleCategoryNull={() => {
+          setCategory('')
+          setCategoryNull((value) => !value)
+        }}
+        onDate={setDate}
+        onToggleNeedsReview={() => setNeedsReview((value) => !value)}
+        onOpenPeriod={openPeriodSheet}
+        onPeriodDraft={setPeriodDraft}
+        onApplyPeriod={applyPeriod}
+        onClearPeriod={clearPeriod}
+        onClearFilters={clearFilters}
+      />
 
       <TKSheet open={Boolean(editing)} onClose={() => setEditing(null)} title="Редактировать">
         {editing && (
@@ -518,168 +404,4 @@ export function HistoryPage({ preset, presetVersion }: Props) {
       </TKSheet>
     </div>
   )
-}
-
-interface EditorProps {
-  operation: Operation | null
-  categories: Categories
-  onSaved: () => void
-  onConfirm?: () => void
-  onDelete?: () => void
-}
-
-function OperationEditor({ operation, categories, onSaved, onConfirm, onDelete }: EditorProps) {
-  const initialForm = operation ? formFromOperation(operation) : emptyOperationForm()
-  const baseline = useRef(initialForm)
-  const [form, setForm] = useState(initialForm)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const lastCreate = useRef<SubmissionKey | null>(null)
-  const categoryOptions = form.type === 'доход' ? categories.income : categories.expense
-
-  const submit = async () => {
-    setSaving(true); setError('')
-    try {
-      const validationError = validateOperationForm(form)
-      if (validationError) {
-        setError(validationError)
-        return
-      }
-      if (operation) {
-        const patch = buildOperationPatch(form, baseline.current)
-        if (!Object.keys(patch).length) {
-          onSaved()
-          return
-        }
-        await api<Operation>(`/api/operations/${operation.id}`, {
-          method: 'PATCH', body: JSON.stringify(patch),
-        })
-        baseline.current = form
-        onSaved()
-      } else {
-        const payload = buildOperationCreatePayload(form)
-        lastCreate.current = submissionKey(lastCreate.current, payload)
-        await createOperation(payload, lastCreate.current.key)
-        onSaved()
-      }
-      haptic('medium')
-    } catch (reason) {
-      setError((reason as Error).message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="history-editor-form">
-      <TKInput
-        label="Сумма"
-        inputMode="decimal"
-        value={form.amount}
-        onChange={(value) => setForm({ ...form, amount: value.replace(',', '.') })}
-      />
-      <TKSelect
-        label="Тип"
-        options={[
-          { value: 'расход', label: 'Расход' },
-          { value: 'доход', label: 'Доход' },
-          { value: 'перевод', label: 'Перевод' },
-        ]}
-        value={form.type}
-        onChange={(value) => {
-          const nextType = value as OperationType
-          const nextOptions = nextType === 'доход' ? categories.income : categories.expense
-          setForm((current) => ({
-            ...current,
-            type: nextType,
-            category: nextType === 'перевод'
-              ? ''
-              : nextOptions.includes(current.category) ? current.category : '',
-            transfer_direction: nextType === 'перевод'
-              ? current.transfer_direction || 'out'
-              : 'out',
-          }))
-        }}
-      />
-      <TKSelect
-        label="Категория"
-        disabled={form.type === 'перевод'}
-        placeholder="Без категории"
-        options={['', ...categoryOptions].map((item) => ({ value: item, label: item || 'Без категории' }))}
-        value={form.category}
-        onChange={(value) => setForm((current) => ({ ...current, category: value }))}
-      />
-      {form.type === 'перевод' && (
-        <TKSelect
-          label="Направление"
-          options={[
-            { value: 'in', label: 'Входящий' },
-            { value: 'out', label: 'Исходящий' },
-            { value: 'self', label: 'Между своими' },
-          ]}
-          value={form.transfer_direction}
-          onChange={(value) => setForm((current) => ({
-            ...current,
-            transfer_direction: value as TransferDirection,
-          }))}
-        />
-      )}
-      <TKNativeField
-        type="date"
-        label="Дата"
-        value={form.op_date}
-        onChange={(value) => setForm({ ...form, op_date: value })}
-      />
-      <TKTextarea
-        label="Комментарий"
-        rows={2}
-        value={form.comment}
-        onChange={(value) => setForm({ ...form, comment: value })}
-      />
-      {operation && (
-        <div className="history-editor-note">
-          <TKTextarea
-            label="Заметка"
-            rows={2}
-            value={form.note}
-            onChange={(value) => setForm({ ...form, note: value })}
-          />
-          <span>
-            Не перезаписывается ботом
-          </span>
-        </div>
-      )}
-      {error && <TKNoticeBar tone="red">{error}</TKNoticeBar>}
-      {operation?.needs_review && onConfirm && (
-        <TKButton full variant="tonal" onClick={onConfirm}>Подтвердить запись</TKButton>
-      )}
-      <TKButton full variant="filled" loading={saving} onClick={() => void submit()}>
-        {operation ? 'Сохранить' : 'Записать операцию'}
-      </TKButton>
-      {operation && onDelete && (
-        <TKButton full variant="destructive" onClick={onDelete}>Удалить операцию</TKButton>
-      )}
-    </div>
-  )
-}
-
-function compareOperations(left: Operation, right: Operation): number {
-  return right.op_date.localeCompare(left.op_date) || right.id - left.id
-}
-
-function calculateDayTotals(operations: Operation[]) {
-  return operations.reduce(
-    (result, operation) => {
-      const amount = Number(operation.amount)
-      if (operation.type === 'расход') result.expense += amount
-      if (operation.type === 'доход') result.income += amount
-      if (operation.type === 'перевод') result.transfer += amount
-      return result
-    },
-    { expense: 0, income: 0, transfer: 0 },
-  )
-}
-
-function formatDayNet(value: number): string {
-  return value > 0 ? `+${formatMoney(value)}` : formatMoney(value)
 }

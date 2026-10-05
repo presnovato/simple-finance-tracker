@@ -180,20 +180,18 @@ async def weekly_budget_spent(
     category_args: list[object] = []
     if categories:
         placeholders = ", ".join("?" for _ in categories)
-        category_clause = (
-            f"AND coalesce(category, 'Прочее') IN ({placeholders})"
-        )
+        category_clause = f"AND category IN ({placeholders})"
         category_args.extend(categories)
     rows = await get_pool().fetch(
         f"""
-        SELECT coalesce(category, 'Прочее') AS category,
+        SELECT category AS category,
                coalesce(sum(amount), 0) AS spent
         FROM operations
         WHERE type = 'расход'
           AND deleted_at IS NULL
           AND op_date BETWEEN ? AND ?
           {category_clause}
-        GROUP BY 1
+        GROUP BY category
         """,
         start.isoformat(),
         end.isoformat(),

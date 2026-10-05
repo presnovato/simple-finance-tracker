@@ -7,10 +7,9 @@
 from datetime import date
 from decimal import Decimal
 
-from finance_bot.config import EXPENSE_CATEGORIES
 from finance_bot.core.budget import week_bounds
 
-from ._common import ValidationError, _payload, iso_date, money
+from ._common import ValidationError, _payload, _text, iso_date, money
 
 
 def _budget_money(value: object, field: str) -> Decimal:
@@ -43,9 +42,9 @@ def budget_settings(payload: object) -> dict:
     seen = set()
     for item in category_items:
         item_data = _payload(item, {"category", "limit"})
-        category = item_data.get("category")
-        if not isinstance(category, str) or category not in EXPENSE_CATEGORIES:
-            raise ValidationError("неизвестная расходная категория")
+        category = _text(item_data.get("category"), "category", 100)
+        if not category:
+            raise ValidationError("категория обязательна")
         if category in seen:
             raise ValidationError("категории должны быть уникальными")
         seen.add(category)

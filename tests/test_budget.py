@@ -31,7 +31,7 @@ async def _expense(
     amount: str,
     *,
     op_date: date = date(2026, 9, 14),
-    category: str | None = "Продукты",
+    category: str | None = "Еда дома",
     type_: str = "расход",
     needs_review: bool = False,
 ) -> int:
@@ -60,7 +60,7 @@ def test_budget_week_uses_effective_monday_boundary():
     ],
 )
 def test_budget_percentages_and_statuses(spent, expected_percent, expected_status):
-    row = budget_line("Продукты", Decimal("10000"), Decimal(spent))
+    row = budget_line("Еда дома", Decimal("10000"), Decimal(spent))
     assert row["percent"] == Decimal(expected_percent)
     assert row["status"] == expected_status
     assert budget_status(row["percent"]) == expected_status
@@ -72,10 +72,10 @@ def test_saving_threshold_is_strictly_greater_than_one_thousand():
 
 
 def test_budget_category_without_limit_has_no_category_status():
-    row = budget_line("Продукты", None, Decimal("123.45"))
+    row = budget_line("Еда дома", None, Decimal("123.45"))
 
     assert row == {
-        "category": "Продукты",
+        "category": "Еда дома",
         "limit": None,
         "spent": Decimal("123.45"),
         "remaining": None,
@@ -88,30 +88,31 @@ async def test_budget_counts_only_selected_active_expenses(sqlite_database):
     await budget_service.save_settings(
         Decimal("5000"),
         [
-            {"category": "Продукты", "limit": Decimal("3000")},
+            {"category": "Еда дома", "limit": Decimal("3000")},
             {"category": "Прочее", "limit": Decimal("1000")},
             {"category": "Жильё", "limit": Decimal("2000")},
         ],
         today=date(2026, 9, 16),
     )
-    await _expense("100", category="Продукты", needs_review=True)
+    await _expense("100", category="Еда дома", needs_review=True)
     await _expense("50", category=None)
     await _expense("700", category="Жильё")
     await _expense("500", category="Транспорт")
-    await _expense("300", category="Продукты", type_="перевод")
-    deleted_id = await _expense("900", category="Продукты")
+    await _expense("300", category="Еда дома", type_="перевод")
+    deleted_id = await _expense("900", category="Еда дома")
     await queries.soft_delete_operation(deleted_id)
 
     report = await budget_service.get_budget(today=date(2026, 9, 16))
 
-    assert report["selected_spent"] == Decimal("850.00")
-    assert report["overall"]["spent"] == Decimal("850.00")
+    # NULL-категория не считается «Прочим» (spec 01).
+    assert report["selected_spent"] == Decimal("800.00")
+    assert report["overall"]["spent"] == Decimal("800.00")
     assert {
         item["category"]: item["spent"] for item in report["categories"]
     } == {
         "Жильё": Decimal("700.00"),
-        "Продукты": Decimal("100.00"),
-        "Прочее": Decimal("50.00"),
+        "Еда дома": Decimal("100.00"),
+        "Прочее": Decimal("0.00"),
     }
 
 
@@ -120,7 +121,7 @@ async def test_budget_snapshot_history_and_no_rollover(sqlite_database):
     next_week = date(2026, 9, 21)
     await budget_service.save_settings(
         Decimal("1000"),
-        [{"category": "Продукты", "limit": Decimal("700")}],
+        [{"category": "Еда дома", "limit": Decimal("700")}],
         today=first_week,
     )
     await _expense("600", op_date=date(2026, 9, 20))
@@ -132,7 +133,7 @@ async def test_budget_snapshot_history_and_no_rollover(sqlite_database):
 
     await budget_service.save_settings(
         Decimal("2000"),
-        [{"category": "Продукты", "limit": Decimal("1500")}],
+        [{"category": "Еда дома", "limit": Decimal("1500")}],
         today=next_week,
     )
     historical = await budget_service.get_budget(
@@ -155,10 +156,10 @@ async def test_budget_overall_only_tracks_all_expenses_without_category_limits(
         [],
         today=today,
     )
-    await _expense("999", op_date=today, category="Продукты")
+    await _expense("999", op_date=today, category="Еда дома")
     await _expense("100", op_date=today, category=None)
     await _expense("50", op_date=today, category="Транспорт", type_="перевод")
-    deleted_id = await _expense("700", op_date=today, category="Продукты")
+    deleted_id = await _expense("700", op_date=today, category="Еда дома")
     await queries.soft_delete_operation(deleted_id)
 
     report = await budget_service.get_budget(today=today)
@@ -166,11 +167,74 @@ async def test_budget_overall_only_tracks_all_expenses_without_category_limits(
     assert report["overall"]["spent"] == Decimal("1099.00")
     assert report["selected_spent"] == Decimal("1099.00")
     assert report["categories"] == []
-    assert lines == []
+    # Справочная строка об остатке недели (spec 03).
+    assert any("Осталось" in line for line in lines)
     notifications = await connection.get_pool().fetch(
         "SELECT * FROM weekly_budget_notifications"
     )
     assert notifications == []
+
+
+def test_weekly_reference_line_positive_remainder_uses_days_after_today():
+    report = {
+        "week_end": date(2026, 9, 20),
+        "overall": {"remaining": Decimal("6000.00")},
+    }
+    # Среда: после текущего дня до конца ISO-недели остаётся 4 дня.
+    assert budget_service.weekly_reference_line(report, date(2026, 9, 16)) == (
+        "Осталось 6 000₽ на 4 дня — в среднем 1 500₽/день."
+    )
+
+
+def test_weekly_reference_line_monday_counts_days_after_today():
+    report = {
+        "week_end": date(2026, 9, 20),
+        "overall": {"remaining": Decimal("3000.00")},
+    }
+    assert budget_service.weekly_reference_line(report, date(2026, 9, 14)) == (
+        "Осталось 3 000₽ на 6 дней — в среднем 500₽/день."
+    )
+
+
+def test_weekly_reference_line_overspend_has_no_negative_daily_budget():
+    report = {
+        "week_end": date(2026, 9, 20),
+        "overall": {"remaining": Decimal("-1500.00")},
+    }
+    line = budget_service.weekly_reference_line(report, date(2026, 9, 16))
+    assert line == "Перерасход 1 500₽ — до конца недели 4 дня."
+    assert "/день" not in line
+
+
+def test_weekly_reference_line_exhausted_limit_has_no_average():
+    report = {
+        "week_end": date(2026, 9, 20),
+        "overall": {"remaining": Decimal("0.00")},
+    }
+    line = budget_service.weekly_reference_line(report, date(2026, 9, 16))
+    assert line == "Лимит исчерпан — до конца недели 4 дня."
+    assert "/день" not in line
+
+
+def test_weekly_reference_line_last_day_shows_only_total():
+    report = {
+        "week_end": date(2026, 9, 20),
+        "overall": {"remaining": Decimal("2500.00")},
+    }
+    line = budget_service.weekly_reference_line(report, date(2026, 9, 20))
+    assert line == "Итог недели: остаток 2 500₽"
+    assert "среднем" not in line
+
+    overspent = {**report, "overall": {"remaining": Decimal("-400.00")}}
+    assert budget_service.weekly_reference_line(
+        overspent, date(2026, 9, 20)
+    ) == "Итог недели: перерасход 400₽"
+
+
+def test_weekly_reference_line_absent_without_limit():
+    assert budget_service.weekly_reference_line(
+        {"week_end": date(2026, 9, 20), "overall": None}, date(2026, 9, 16)
+    ) is None
 
 
 async def test_budget_selected_category_can_skip_individual_limit(sqlite_database):
@@ -178,12 +242,12 @@ async def test_budget_selected_category_can_skip_individual_limit(sqlite_databas
     await budget_service.save_settings(
         Decimal("2000"),
         [
-            {"category": "Продукты", "limit": None},
+            {"category": "Еда дома", "limit": None},
             {"category": "Транспорт", "limit": Decimal("500")},
         ],
         today=today,
     )
-    await _expense("125", op_date=today, category="Продукты")
+    await _expense("125", op_date=today, category="Еда дома")
     await _expense("75", op_date=today, category="Транспорт")
 
     report = await budget_service.get_budget(today=today)
@@ -191,8 +255,8 @@ async def test_budget_selected_category_can_skip_individual_limit(sqlite_databas
 
     assert report["selected_spent"] == Decimal("200.00")
     assert report["category_limits_total"] == Decimal("500.00")
-    assert rows["Продукты"] == {
-        "category": "Продукты",
+    assert rows["Еда дома"] == {
+        "category": "Еда дома",
         "limit": None,
         "spent": Decimal("125.00"),
         "remaining": None,
@@ -222,7 +286,7 @@ async def test_budget_api_auth_and_validation_are_owner_only(sqlite_database, mo
             "/api/budget/settings",
             json={
                 "overall_limit": "10000.00",
-                "categories": [{"category": "Продукты", "limit": "5000.00"}],
+                "categories": [{"category": "Еда дома", "limit": "5000.00"}],
             },
         )
         assert response.status == 200
@@ -232,12 +296,12 @@ async def test_budget_api_auth_and_validation_are_owner_only(sqlite_database, mo
             "/api/budget/settings",
             json={
                 "overall_limit": "8000.00",
-                "categories": [{"category": "Продукты"}],
+                "categories": [{"category": "Еда дома"}],
             },
         )
         assert response.status == 200
         assert (await response.json())["categories"] == [
-            {"category": "Продукты", "limit": None}
+            {"category": "Еда дома", "limit": None}
         ]
 
         response = await client.put(
@@ -251,8 +315,8 @@ async def test_budget_api_auth_and_validation_are_owner_only(sqlite_database, mo
             {"overall_limit": 10000, "categories": []},
             {"overall_limit": None, "categories": []},
             {"overall_limit": "10000", "categories": [{"category": "Неизвестно", "limit": "1"}]},
-            {"overall_limit": "10000", "categories": [{"category": "Продукты", "limit": 1}]},
-            {"overall_limit": "10000", "categories": [{"category": "Продукты", "limit": "0"}]},
+            {"overall_limit": "10000", "categories": [{"category": "Еда дома", "limit": 1}]},
+            {"overall_limit": "10000", "categories": [{"category": "Еда дома", "limit": "0"}]},
         ):
             response = await client.put("/api/budget/settings", json=payload)
             assert response.status == 400
@@ -298,7 +362,7 @@ async def test_budget_notifications_claim_once_and_combine_thresholds(sqlite_dat
     today = date(2026, 9, 16)
     await budget_service.save_settings(
         Decimal("1000"),
-        [{"category": "Продукты", "limit": Decimal("2000")}],
+        [{"category": "Еда дома", "limit": Decimal("2000")}],
         today=today,
     )
     await _expense("1100", op_date=today)
@@ -323,17 +387,19 @@ async def test_sunday_congratulation_is_strict_and_idempotent(sqlite_database):
     sunday = date(2026, 9, 20)
     await budget_service.save_settings(
         Decimal("2000"),
-        [{"category": "Продукты", "limit": Decimal("2000")}],
+        [{"category": "Еда дома", "limit": Decimal("2000")}],
         today=sunday,
     )
     await _expense("999", op_date=sunday)
     lines = await budget_service.evening_budget_lines(sunday)
     assert any("сэкономить" in line for line in lines)
-    assert not await budget_service.evening_budget_lines(sunday)
+    # Повторный вызов не дублирует поздравление (справочная строка допустима).
+    repeat = await budget_service.evening_budget_lines(sunday)
+    assert not any("сэкономить" in line for line in repeat)
 
     await budget_service.save_settings(
         Decimal("2000"),
-        [{"category": "Продукты", "limit": Decimal("2000")}],
+        [{"category": "Еда дома", "limit": Decimal("2000")}],
         today=date(2026, 9, 27),
     )
     await _expense("1000", op_date=date(2026, 9, 27))

@@ -92,7 +92,8 @@ async def _credit_payment(message: Message, intent: dict) -> None:
     matches = _match_credits(intent["creditor"], active)
     exact = len(matches) == 1
     operation_id = await _insert_operation(
-        intent, type_="расход", category="Долги", comment=comment,
+        intent, type_="расход", category="Финансовые обязательства",
+        comment=comment,
         needs_review=intent["needs_review"] or not exact,
     )
     await budget_service.notify_after_new_expense(
@@ -110,7 +111,7 @@ async def _credit_payment(message: Message, intent: dict) -> None:
             )
             return
         text = (
-            f"✅ Записал: расход {fmt_amount(intent['amount'])} · Долги\n"
+            f"✅ Записал: расход {fmt_amount(intent['amount'])} · Финансовые обязательства\n"
             f"{_credit_label(debt)}: остаток тела не изменён — "
             "разбивка платежа неизвестна. Уточни остаток в TMA."
         )
@@ -122,7 +123,7 @@ async def _credit_payment(message: Message, intent: dict) -> None:
     await _reply_and_link(
         message,
         operation_id,
-        f"✅ Расход {fmt_amount(intent['amount'])} записан в «Долги».\n{prompt}",
+        f"✅ Расход {fmt_amount(intent['amount'])} записан в «Финансовые обязательства».\n{prompt}",
         _credit_keyboard(operation_id, candidates),
     )
 
