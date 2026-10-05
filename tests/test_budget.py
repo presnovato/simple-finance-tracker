@@ -168,52 +168,49 @@ async def test_budget_overall_only_tracks_all_expenses_without_category_limits(
     assert report["selected_spent"] == Decimal("1099.00")
     assert report["categories"] == []
     # Справочная строка об остатке недели (spec 03).
-    assert any("Осталось" in line for line in lines)
+    assert any("Остаток недельного бюджета:" in line for line in lines)
     notifications = await connection.get_pool().fetch(
         "SELECT * FROM weekly_budget_notifications"
     )
     assert notifications == []
 
 
-def test_weekly_reference_line_positive_remainder_uses_days_after_today():
+def test_weekly_reference_line_shows_remainder_without_daily_average():
     report = {
         "week_end": date(2026, 9, 20),
         "overall": {"remaining": Decimal("6000.00")},
     }
-    # Среда: после текущего дня до конца ISO-недели остаётся 4 дня.
     assert budget_service.weekly_reference_line(report, date(2026, 9, 16)) == (
-        "Осталось 6 000₽ на 4 дня — в среднем 1 500₽/день."
+        "Остаток недельного бюджета: 6 000₽."
     )
 
 
-def test_weekly_reference_line_monday_counts_days_after_today():
+def test_weekly_reference_line_does_not_change_by_weekday():
     report = {
         "week_end": date(2026, 9, 20),
         "overall": {"remaining": Decimal("3000.00")},
     }
     assert budget_service.weekly_reference_line(report, date(2026, 9, 14)) == (
-        "Осталось 3 000₽ на 6 дней — в среднем 500₽/день."
+        "Остаток недельного бюджета: 3 000₽."
     )
 
 
-def test_weekly_reference_line_overspend_has_no_negative_daily_budget():
+def test_weekly_reference_line_overspend_shows_only_actual_overrun():
     report = {
         "week_end": date(2026, 9, 20),
         "overall": {"remaining": Decimal("-1500.00")},
     }
     line = budget_service.weekly_reference_line(report, date(2026, 9, 16))
-    assert line == "Перерасход 1 500₽ — до конца недели 4 дня."
-    assert "/день" not in line
+    assert line == "Перерасход недельного бюджета: 1 500₽."
 
 
-def test_weekly_reference_line_exhausted_limit_has_no_average():
+def test_weekly_reference_line_exhausted_limit_shows_no_daily_target():
     report = {
         "week_end": date(2026, 9, 20),
         "overall": {"remaining": Decimal("0.00")},
     }
     line = budget_service.weekly_reference_line(report, date(2026, 9, 16))
-    assert line == "Лимит исчерпан — до конца недели 4 дня."
-    assert "/день" not in line
+    assert line == "Недельный лимит исчерпан."
 
 
 def test_weekly_reference_line_last_day_shows_only_total():
@@ -223,7 +220,6 @@ def test_weekly_reference_line_last_day_shows_only_total():
     }
     line = budget_service.weekly_reference_line(report, date(2026, 9, 20))
     assert line == "Итог недели: остаток 2 500₽"
-    assert "среднем" not in line
 
     overspent = {**report, "overall": {"remaining": Decimal("-400.00")}}
     assert budget_service.weekly_reference_line(

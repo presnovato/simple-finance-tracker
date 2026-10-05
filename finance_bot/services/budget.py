@@ -2,11 +2,11 @@
 
 import logging
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from aiogram import Bot
 
-from finance_bot.config import ALLOWED_USER_ID, EXPENSE_CATEGORIES, plural_ru
+from finance_bot.config import ALLOWED_USER_ID, EXPENSE_CATEGORIES
 from finance_bot.core.budget import (
     budget_line,
     overall_line,
@@ -198,9 +198,8 @@ def _threshold_text(report: dict, events: list[str]) -> str:
 def weekly_reference_line(report: dict, today: date) -> str | None:
     """Справочная строка об остатке недели для вечернего отчёта (spec 03).
 
-    Считает дни после текущего эффективного дня до конца ISO-недели. Среднее —
-    только арифметическая справка, не план расходов. В последний день недели
-    среднее не вычисляется; при исчерпанном лимите отрицательного среднего нет.
+    Показывает фактический остаток недельного лимита без дневного среднего,
+    нормы трат или предположения о равномерном расходовании.
     """
     overall = report.get("overall")
     if overall is None:
@@ -213,21 +212,11 @@ def weekly_reference_line(report: dict, today: date) -> str | None:
             return f"Итог недели: перерасход {fmt_amount(abs(remaining))}"
         return f"Итог недели: остаток {fmt_amount(remaining)}"
 
-    day_word = plural_ru(days_left, ("день", "дня", "дней"))
     if remaining < 0:
-        return (
-            f"Перерасход {fmt_amount(abs(remaining))} — "
-            f"до конца недели {days_left} {day_word}."
-        )
+        return f"Перерасход недельного бюджета: {fmt_amount(abs(remaining))}."
     if remaining == 0:
-        return f"Лимит исчерпан — до конца недели {days_left} {day_word}."
-    average = (remaining / days_left).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    return (
-        f"Осталось {fmt_amount(remaining)} на {days_left} {day_word} — "
-        f"в среднем {fmt_amount(average)}/день."
-    )
+        return "Недельный лимит исчерпан."
+    return f"Остаток недельного бюджета: {fmt_amount(remaining)}."
 
 
 async def evening_budget_lines(today: date) -> list[str]:
