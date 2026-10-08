@@ -184,12 +184,14 @@ export function OverviewPage({ openHistory, openUpcoming }: Props) {
         onClose={() => setBudgetSheetOpen(false)}
         title="Настройка недельного бюджета"
       >
-        <BudgetSettingsForm
-          onSaved={() => {
-            setBudgetSheetOpen(false)
-            setBudgetRefresh((value) => value + 1)
-          }}
-        />
+        {budgetSheetOpen && (
+          <BudgetSettingsForm
+            onSaved={() => {
+              setBudgetSheetOpen(false)
+              setBudgetRefresh((value) => value + 1)
+            }}
+          />
+        )}
       </TKSheet>
 
       <TKSheet
