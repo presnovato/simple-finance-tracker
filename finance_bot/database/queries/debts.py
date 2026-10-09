@@ -22,10 +22,14 @@ def _advance_month(value: date, payment_day: int | None = None) -> date:
 
 
 def _next_payment_after(
-    debt: dict, payment_type: str,
+    debt: dict, payment_type: str, pay_date: date,
 ) -> date | None:
     scheduled = debt.get("next_payment_date")
-    if payment_type != "regular" or scheduled is None:
+    if scheduled is None:
+        return scheduled
+    if payment_type == "early":
+        if pay_date < scheduled:
+            return _advance_month(scheduled, debt.get("payment_day"))
         return scheduled
     return _advance_month(scheduled, debt.get("payment_day"))
 
@@ -265,7 +269,7 @@ async def record_debt_payment(
                 principal_amount if principal_amount is not None else Decimal("0")
             )
             new_balance = debt["balance"] - applied_principal
-            next_payment_date = _next_payment_after(debt, payment_type)
+            next_payment_date = _next_payment_after(debt, payment_type, pay_date)
             await conn.execute(
                 """
                 INSERT INTO debt_payments (
@@ -362,7 +366,7 @@ async def create_debt_payment(
                     raise DebtPaymentError(
                         "часть платежа в тело не может быть больше остатка"
                     )
-            next_payment_date = _next_payment_after(debt, payment_type)
+            next_payment_date = _next_payment_after(debt, payment_type, pay_date)
             payment_label = (
                 "Досрочное погашение" if payment_type == "early" else "Платёж"
             )

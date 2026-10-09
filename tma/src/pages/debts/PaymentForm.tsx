@@ -97,7 +97,7 @@ export function PaymentForm({ target, onSaved }: { target: DebtTarget; onSaved: 
             onChange={(value) => setPaymentType(value as DebtPaymentType)}
           />
           {paymentType === 'early' && (
-            <p className="sheet-hint">Досрочный платёж уменьшит остаток и попадёт в историю отдельно. Банковский график автоматически не пересчитывается.</p>
+            <p className="sheet-hint">Если внести досрочный платёж до даты очередного платежа, следующий регулярный платёж перенесётся на месяц.</p>
           )}
         </>
       )}

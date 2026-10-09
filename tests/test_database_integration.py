@@ -422,7 +422,7 @@ async def test_credit_payment_without_body_breakdown_does_not_change_balance(
     assert history[0]["interest_amount"] is None
 
 
-async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
+async def test_credit_metadata_and_early_payment_before_due_advances_schedule(
     sqlite_database,
 ):
     debt = await queries.insert_debt(
@@ -450,7 +450,7 @@ async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
         principal_amount=Decimal("20"),
     )
     assert early is not None
-    assert early["next_payment_date"] == date(2026, 8, 15)
+    assert early["next_payment_date"] == date(2026, 9, 15)
     early_operation = await queries.get_operation(
         (await queries.debt_history(debt["id"]))[0]["operation_id"]
     )
@@ -460,11 +460,11 @@ async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
     assert (await queries.debt_history(debt["id"]))[0]["interest_amount"] == Decimal("0.00")
 
     regular = await queries.create_debt_payment(
-        debt["id"], date(2026, 8, 15), Decimal("40"), "regular-key",
+        debt["id"], date(2026, 9, 15), Decimal("40"), "regular-key",
         principal_amount=Decimal("40"),
     )
     assert regular is not None
-    assert regular["next_payment_date"] == date(2026, 9, 15)
+    assert regular["next_payment_date"] == date(2026, 10, 15)
 
 
 async def test_debt_adjustment_is_history_not_payment_and_archive_is_reversible(
