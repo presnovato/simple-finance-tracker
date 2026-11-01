@@ -91,9 +91,13 @@ async def patch_subscription(request: web.Request) -> web.Response:
         fields.get("status") == "active"
         and current.get("status") == "cancelled"
     ):
+        if "next_charge" not in fields and current.get("billing_day"):
+            fields["billing_day"] = current["billing_day"]
         next_charge = fields.get("next_charge", current["next_charge"])
         while next_charge <= effective_today():
-            next_charge = next_charge_after(next_charge, current["period"])
+            next_charge = next_charge_after(
+                next_charge, current["period"], current.get("billing_day")
+            )
         fields["next_charge"] = next_charge
     updated = await queries.patch_subscription(subscription_id, fields)
     if updated is None:

@@ -8,8 +8,14 @@ PERIODS = {"monthly", "yearly"}
 MONEY_STEP = Decimal("0.01")
 
 
-def next_charge_after(current: date, period: str) -> date:
-    """Сдвигает дату списания на один период, не выходя за конец месяца."""
+def next_charge_after(
+    current: date, period: str, billing_day: int | None = None
+) -> date:
+    """Сдвигает дату списания на один период, не выходя за конец месяца.
+
+    `billing_day` — исходный день списания. Без него дата «съезжает» после
+    короткого месяца: 31.01 → 28.02 → 28.03 вместо 31.03.
+    """
     if period not in PERIODS:
         raise ValueError("period должен быть monthly или yearly")
 
@@ -20,7 +26,7 @@ def next_charge_after(current: date, period: str) -> date:
         year = current.year + 1
         month = current.month
 
-    day = min(current.day, monthrange(year, month)[1])
+    day = min(billing_day or current.day, monthrange(year, month)[1])
     return date(year, month, day)
 
 
@@ -64,7 +70,9 @@ def upcoming_charges(
             continue
         charge_date = subscription["next_charge"]
         while charge_date <= today:
-            charge_date = next_charge_after(charge_date, subscription["period"])
+            charge_date = next_charge_after(
+                charge_date, subscription["period"], subscription.get("billing_day")
+            )
         while charge_date <= end:
             result.append({
                 "subscription_id": subscription["id"],
@@ -72,7 +80,9 @@ def upcoming_charges(
                 "amount": Decimal(subscription["amount"]),
                 "charge_date": charge_date,
             })
-            charge_date = next_charge_after(charge_date, subscription["period"])
+            charge_date = next_charge_after(
+                charge_date, subscription["period"], subscription.get("billing_day")
+            )
 
     return sorted(
         result, key=lambda charge: (charge["charge_date"], charge["subscription_id"])

@@ -263,6 +263,31 @@ async def delete_operation(op_id: int) -> None:
     await get_pool().execute("DELETE FROM operations WHERE id = ?", op_id)
 
 
+_OPERATION_LINKS = (
+    ("debt_payments", "платёж по кредиту"),
+    ("personal_debts", "личный долг"),
+    ("personal_debt_payments", "возврат личного долга"),
+    ("crypto_transactions", "крипто-операция"),
+)
+
+
+async def operation_links(op_id: int) -> list[str]:
+    """Записи долгов и крипты, которые ссылаются на операцию.
+
+    Удаление такой операции не меняет остатки долгов и крипты — их нужно
+    поправить отдельно, поэтому бот предупреждает об этом.
+    """
+    pool = get_pool()
+    links: list[str] = []
+    for table, label in _OPERATION_LINKS:
+        row = await pool.fetchrow(
+            f"SELECT 1 FROM {table} WHERE operation_id = ? LIMIT 1", op_id
+        )
+        if row is not None:
+            links.append(label)
+    return links
+
+
 async def find_possible_duplicates(
     op_date: date, amount: Decimal, type_: str, category: str | None
 ) -> int | None:

@@ -8,6 +8,7 @@ from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 
+from finance_bot.core.debts import estimate_principal as estimate_debt_principal
 from finance_bot.database.connection import get_pool
 
 from ._common import _date_value, _db_value, _row, _rows, from_cents, to_cents
@@ -228,8 +229,13 @@ async def record_debt_payment(
     amount: Decimal,
     payment_type: str = "regular",
     principal_amount: Decimal | None = None,
+    estimate_principal: bool = False,
 ) -> dict | None:
-    """Идемпотентно привязывает операцию и применяет известную часть к телу."""
+    """Идемпотентно привязывает операцию и применяет известную часть к телу.
+
+    `estimate_principal=True` (платёж из бота без разбивки) оценивает часть в
+    тело по ставке и остатку, чтобы остаток кредита не стоял на месте.
+    """
     pool = get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -256,6 +262,10 @@ async def record_debt_payment(
                 raise DebtPaymentError("сумма платежа должна быть больше нуля")
             if payment_type not in {"regular", "early"}:
                 raise DebtPaymentError("неизвестный тип платежа")
+            if principal_amount is None and estimate_principal:
+                principal_amount = estimate_debt_principal(
+                    amount, debt["balance"], debt.get("rate")
+                )
             if principal_amount is not None:
                 if principal_amount < 0 or principal_amount > amount:
                     raise DebtPaymentError(

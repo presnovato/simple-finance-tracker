@@ -314,6 +314,23 @@ async def _migrate_balance_snapshots(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def _migrate_subscription_billing_day(conn: aiosqlite.Connection) -> None:
+    """Исходный день списания, чтобы дата не съезжала после коротких месяцев."""
+    await _ensure_column(
+        conn,
+        "subscriptions",
+        "billing_day",
+        "billing_day INTEGER CHECK (billing_day BETWEEN 1 AND 31)",
+    )
+    await conn.execute(
+        """
+        UPDATE subscriptions
+        SET billing_day = CAST(strftime('%d', next_charge) AS INTEGER)
+        WHERE billing_day IS NULL
+        """
+    )
+
+
 _MIGRATIONS = (
     (1, "legacy_columns", _migrate_legacy_columns),
     (2, "indexes_after_columns", _migrate_indexes),
@@ -325,6 +342,7 @@ _MIGRATIONS = (
     (8, "manual_capture_sessions", _migrate_manual_capture_sessions),
     (9, "source_idempotency", _migrate_source_idempotency),
     (10, "balance_snapshots", _migrate_balance_snapshots),
+    (11, "subscription_billing_day", _migrate_subscription_billing_day),
 )
 
 

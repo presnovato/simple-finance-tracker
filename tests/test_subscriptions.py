@@ -75,3 +75,12 @@ def test_yearly_cost_and_share_are_decimal_safe():
     assert yearly_cost(subscriptions) == Decimal("1200.00")
     assert share_of_expenses(Decimal("2398"), Decimal("19340")) == Decimal("12.4")
     assert share_of_expenses(Decimal("10"), Decimal("0")) is None
+
+
+def test_next_charge_keeps_billing_day_after_short_month():
+    # Регрессия: 31.01 → 28.02 → 28.03; с исходным днём — обратно на 31.03.
+    feb = next_charge_after(date(2026, 1, 31), "monthly", 31)
+    assert feb == date(2026, 2, 28)
+    assert next_charge_after(feb, "monthly", 31) == date(2026, 3, 31)
+    assert next_charge_after(date(2025, 2, 28), "yearly", 29) == date(2026, 2, 28)
+    assert next_charge_after(date(2027, 2, 28), "yearly", 29) == date(2028, 2, 29)

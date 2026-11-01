@@ -316,11 +316,30 @@ async def on_many_cancel(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+async def delete_operation_from_bot(op_id: int, what: str = "") -> str:
+    """Мягко удаляет операцию из бота и возвращает текст ответа.
+
+    Жёсткий DELETE падал на операциях, на которые ссылаются долги или крипта
+    (foreign keys включены), и не давал восстановить запись из TMA.
+    """
+    links = await queries.operation_links(op_id)
+    await queries.soft_delete_operation(op_id)
+    head = f"🗑 Удалил: {what}." if what else "🗑 Удалил."
+    text = f"{head} Вернуть можно в TMA → История."
+    if links:
+        text += (
+            f"\n⚠️ Операция была привязана: {', '.join(links)}. "
+            "Остатки там не изменились — поправь их в TMA."
+        )
+    return text
+
+
 @router.callback_query(F.data.startswith("del:"))
 async def on_delete(callback: CallbackQuery) -> None:
     op_id = int(callback.data.split(":")[1])
-    await queries.delete_operation(op_id)
-    await callback.message.edit_text("🗑 Удалил.")
+    text = await delete_operation_from_bot(op_id)
+    if callback.message is not None:
+        await callback.message.edit_text(text)
     await callback.answer()
 
 

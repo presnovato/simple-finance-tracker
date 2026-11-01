@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   amount       INTEGER NOT NULL CHECK (amount >= 0),
   period       TEXT    NOT NULL CHECK (period IN ('monthly','yearly')),
   next_charge  TEXT    NOT NULL,
+  billing_day  INTEGER CHECK (billing_day BETWEEN 1 AND 31),
   category     TEXT,
   comment      TEXT,
   status       TEXT    NOT NULL DEFAULT 'active'
