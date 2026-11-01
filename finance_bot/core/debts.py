@@ -4,7 +4,7 @@ import json
 import re
 from calendar import monthrange
 from datetime import date
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 
 from finance_bot.core.parsing import parse_amount, validate_operation_date
 
@@ -38,11 +38,30 @@ def match_records(query: str | None, records: list[dict], field: str) -> list[di
     exact = [row for row in records if normalize_match_text(row.get(field)) == needle]
     if exact:
         return exact
-    return [
-        row for row in records
-        if needle in normalize_match_text(row.get(field))
-        or normalize_match_text(row.get(field)) in needle
-    ]
+    matches = []
+    for row in records:
+        value = normalize_match_text(row.get(field))
+        # Пустое поле не должно совпадать с любым запросом: "" in needle всегда True.
+        if value and (needle in value or value in needle):
+            matches.append(row)
+    return matches
+
+
+def estimate_principal(
+    amount: Decimal, balance: Decimal, annual_rate: Decimal | None
+) -> Decimal:
+    """Оценивает часть платежа, ушедшую в тело кредита.
+
+    Проценты за месяц = остаток × ставка / 12; остальное — тело. Без ставки
+    весь платёж считается телом (рассрочка). Результат в [0, остаток].
+    """
+    interest = ZERO
+    if annual_rate:
+        interest = (balance * annual_rate / Decimal("1200")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    principal = amount - interest
+    return max(ZERO, min(principal, balance))
 
 
 def _json_object(raw: str) -> dict:

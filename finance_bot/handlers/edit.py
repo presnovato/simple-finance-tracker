@@ -72,8 +72,9 @@ async def on_correction(message: Message) -> None:
         return
 
     if message.text.strip().lower() in DELETE_WORDS:
-        await queries.delete_operation(op["id"])
-        await message.reply(f"🗑 Удалил: {op['type']} {fmt_amount(op['amount'])}.")
+        await message.reply(await capture.delete_operation_from_bot(
+            op["id"], f"{op['type']} {fmt_amount(op['amount'])}"
+        ))
         return
 
     corrected = await _correct(

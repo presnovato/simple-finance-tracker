@@ -107,7 +107,7 @@ async def test_migrations_preserve_history_and_limits(tmp_path, monkeypatch):
             row["version"]
             for row in await pool.fetch("SELECT version FROM schema_migrations")
         }
-        assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+        assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
     finally:
         await connection.close_pool()
 

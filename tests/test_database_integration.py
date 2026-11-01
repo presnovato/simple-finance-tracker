@@ -1043,6 +1043,7 @@ async def test_schema_migration_history_is_recorded(sqlite_database):
         {"version": 8, "name": "manual_capture_sessions"},
         {"version": 9, "name": "source_idempotency"},
         {"version": 10, "name": "balance_snapshots"},
+        {"version": 11, "name": "subscription_billing_day"},
     ]
 
 
@@ -1123,3 +1124,65 @@ async def test_legacy_schema_is_migrated_before_indexes(tmp_path, monkeypatch):
         } <= indexes
     finally:
         await connection.close_pool()
+
+
+async def test_subscription_charge_keeps_billing_day(sqlite_database):
+    created = await queries.insert_subscription(
+        title="Облако",
+        amount=Decimal("199"),
+        period="monthly",
+        next_charge=date(2026, 1, 31),
+        category="Подписки",
+        comment=None,
+    )
+    assert created["billing_day"] == 31
+
+    first = await queries.charge_subscription(created["id"], confirmed=False)
+    assert first["subscription"]["next_charge"] == date(2026, 2, 28)
+    second = await queries.charge_subscription(created["id"], confirmed=False)
+    assert second["subscription"]["next_charge"] == date(2026, 3, 31)
+
+    moved = await queries.patch_subscription(
+        created["id"], {"next_charge": date(2026, 4, 15)}
+    )
+    assert moved["billing_day"] == 15
+
+
+async def test_bot_credit_payment_estimates_principal(sqlite_database):
+    debt = await queries.insert_debt(
+        creditor="Банк",
+        principal=Decimal("120000"),
+        rate=Decimal("12"),
+        min_payment=Decimal("10000"),
+        priority=1,
+        due_date=None,
+    )
+    operation_id = await _insert_expense("10000", category="Финансовые обязательства")
+
+    updated = await queries.record_debt_payment(
+        debt["id"], operation_id, date(2026, 7, 26), Decimal("10000"),
+        estimate_principal=True,
+    )
+    payments = await queries.debt_payment_history(debt["id"])
+
+    assert updated["balance"] == Decimal("111200.00")
+    assert payments[0]["principal_amount"] == Decimal("8800.00")
+
+
+async def test_operation_links_report_debt_payment(sqlite_database):
+    debt = await queries.insert_debt(
+        creditor="Банк",
+        principal=Decimal("1000"),
+        rate=None,
+        min_payment=None,
+        priority=1,
+        due_date=None,
+    )
+    linked = await _insert_expense("100", category="Финансовые обязательства")
+    plain = await _insert_expense("50")
+    await queries.record_debt_payment(
+        debt["id"], linked, date(2026, 7, 26), Decimal("100")
+    )
+
+    assert await queries.operation_links(linked) == ["платёж по кредиту"]
+    assert await queries.operation_links(plain) == []

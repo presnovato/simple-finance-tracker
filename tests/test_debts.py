@@ -102,3 +102,30 @@ async def test_regular_expense_does_not_call_debt_classifier(monkeypatch):
     monkeypatch.setattr(llm, "_call", fail)
     result = await llm.extract_debt_intent("кофе 350", TODAY)
     assert result["intent"] == "expense"
+
+
+def test_match_records_ignores_empty_field_values():
+    # Регрессия: "" in needle всегда True, и кредит без loan_name
+    # совпадал с любым запросом — платёж привязывался автоматически.
+    rows = [
+        {"id": 1, "creditor": "Сбер", "loan_name": None},
+        {"id": 2, "creditor": "Т-Банк", "loan_name": ""},
+    ]
+    assert match_records("ВТБ ипотека", rows, "loan_name") == []
+    assert match_records("ВТБ ипотека", rows, "creditor") == []
+
+
+def test_estimate_principal_subtracts_monthly_interest():
+    from finance_bot.core.debts import estimate_principal
+
+    # 120 000 × 12% / 12 = 1 200 процентов → в тело 8 800.
+    assert estimate_principal(
+        Decimal("10000"), Decimal("120000"), Decimal("12")
+    ) == Decimal("8800.00")
+    # Без ставки (рассрочка) весь платёж — тело.
+    assert estimate_principal(Decimal("5000"), Decimal("20000"), None) == Decimal("5000")
+    # Никогда не больше остатка и не меньше нуля.
+    assert estimate_principal(Decimal("5000"), Decimal("3000"), None) == Decimal("3000")
+    assert estimate_principal(
+        Decimal("100"), Decimal("120000"), Decimal("12")
+    ) == Decimal("0")

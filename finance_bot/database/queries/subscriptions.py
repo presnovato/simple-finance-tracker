@@ -56,15 +56,16 @@ async def insert_subscription(
     row = await get_pool().fetchrow(
         """
         INSERT INTO subscriptions (
-          title, amount, period, next_charge, category, comment
+          title, amount, period, next_charge, billing_day, category, comment
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         """,
         title,
         to_cents(amount),
         period,
         next_charge.isoformat(),
+        next_charge.day,
         category,
         comment,
     )
@@ -77,11 +78,16 @@ async def patch_subscription(
     subscription_id: int, fields: dict
 ) -> dict | None:
     allowed = {
-        "title", "amount", "period", "next_charge", "category", "comment", "status",
+        "title", "amount", "period", "next_charge", "billing_day",
+        "category", "comment", "status",
     }
     updates = {key: value for key, value in fields.items() if key in allowed}
     if not updates:
         return await get_subscription(subscription_id)
+    if isinstance(updates.get("next_charge"), date):
+        # Явно заданная дата становится новым днём списания, если вызывающий
+        # код не сохранил исходный день сам (например, при возобновлении).
+        updates.setdefault("billing_day", updates["next_charge"].day)
     columns = ", ".join(f"{key} = ?" for key in updates)
     values = [_db_value(key, value) for key, value in updates.items()]
     row = await get_pool().fetchrow(
@@ -180,7 +186,9 @@ async def charge_subscription(
             new_next_charge = current_next_charge
             if current_next_charge <= charge_date:
                 new_next_charge = next_charge_after(
-                    current_next_charge, subscription["period"]
+                    current_next_charge,
+                    subscription["period"],
+                    subscription.get("billing_day"),
                 )
 
             if new_next_charge != current_next_charge:
