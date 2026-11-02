@@ -61,3 +61,13 @@ jobs:
             git status -- tma/dist
             exit 1
           fi
+
+  # Единый статус для правила защиты main: оно ждёт проверку с именем "CI".
+  ci:
+    name: CI
+    if: always()
+    needs: [backend, secrets, tma]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then exit 1; fi
