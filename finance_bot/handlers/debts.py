@@ -35,6 +35,15 @@ def _credit_label(row: dict) -> str:
     return title
 
 
+def _balance_note(debt: dict) -> str:
+    if debt["status"] == "closed":
+        return "🎉 кредит закрыт по оценке. Проверь в TMA."
+    return (
+        f"остаток тела ≈ {fmt_amount(debt['balance'])} (оценка по ставке). "
+        "Если банк показывает другой остаток — скорректируй его в TMA."
+    )
+
+
 def _match_credits(query: str | None, records: list[dict]) -> list[dict]:
     if not query:
         return records
@@ -91,9 +100,11 @@ async def _credit_payment(message: Message, intent: dict) -> None:
     active = await queries.list_debts("active")
     matches = _match_credits(intent["creditor"], active)
     exact = len(matches) == 1
+    # Разбивка платежа на тело и проценты оценочная — всегда на проверку.
     operation_id = await _insert_operation(
-        intent, type_="расход", category="Долги", comment=comment,
-        needs_review=intent["needs_review"] or not exact,
+        intent, type_="расход", category="Финансовые обязательства",
+        comment=comment,
+        needs_review=True,
     )
     await budget_service.notify_after_new_expense(
         getattr(message, "bot", None), intent["date"]
@@ -101,7 +112,8 @@ async def _credit_payment(message: Message, intent: dict) -> None:
 
     if exact:
         debt = await queries.record_debt_payment(
-            matches[0]["id"], operation_id, intent["date"], intent["amount"]
+            matches[0]["id"], operation_id, intent["date"], intent["amount"],
+            estimate_principal=True,
         )
         if debt is None:
             await _reply_and_link(
@@ -110,9 +122,8 @@ async def _credit_payment(message: Message, intent: dict) -> None:
             )
             return
         text = (
-            f"✅ Записал: расход {fmt_amount(intent['amount'])} · Долги\n"
-            f"{_credit_label(debt)}: остаток тела не изменён — "
-            "разбивка платежа неизвестна. Уточни остаток в TMA."
+            f"✅ Записал: расход {fmt_amount(intent['amount'])} · Финансовые обязательства\n"
+            f"{_credit_label(debt)}: {_balance_note(debt)}"
         )
         await _reply_and_link(message, operation_id, text)
         return
@@ -122,7 +133,7 @@ async def _credit_payment(message: Message, intent: dict) -> None:
     await _reply_and_link(
         message,
         operation_id,
-        f"✅ Расход {fmt_amount(intent['amount'])} записан в «Долги».\n{prompt}",
+        f"✅ Расход {fmt_amount(intent['amount'])} записан в «Финансовые обязательства».\n{prompt}",
         _credit_keyboard(operation_id, candidates),
     )
 
@@ -229,17 +240,17 @@ async def choose_credit(callback: CallbackQuery) -> None:
         await callback.answer("Операция не найдена", show_alert=True)
         return
     debt = await queries.record_debt_payment(
-        int(debt_text), operation["id"], operation["op_date"], operation["amount"]
+        int(debt_text), operation["id"], operation["op_date"], operation["amount"],
+        estimate_principal=True,
     )
     if debt is None:
         await callback.answer("Кредит не найден", show_alert=True)
         return
-    await queries.confirm_operation(operation["id"])
-    await callback.message.edit_text(
-        f"✅ Платёж привязан к «{_credit_label(debt)}».\n"
-        "Остаток тела не изменён: часть платежа, ушедшая в тело, "
-        "не указана. Уточни его в TMA."
-    )
+    if callback.message is not None:
+        await callback.message.edit_text(
+            f"✅ Платёж привязан к «{_credit_label(debt)}».\n"
+            f"{_balance_note(debt).capitalize()}"
+        )
     await callback.answer()
 
 

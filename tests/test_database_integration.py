@@ -24,7 +24,7 @@ async def _insert_expense(
     amount: str,
     *,
     op_date: date = date(2026, 7, 26),
-    category: str = "Продукты",
+    category: str = "Еда дома",
     comment: str = "продукты",
     needs_review: bool = False,
 ) -> int:
@@ -56,7 +56,7 @@ async def test_operation_round_trip_preserves_public_types(sqlite_database):
 
 
 async def test_aggregates_and_daily_dates_keep_contract(sqlite_database):
-    await _insert_expense("540.10", category="Продукты")
+    await _insert_expense("540.10", category="Еда дома")
     await _insert_expense("59.90", category="Транспорт")
     await queries.insert_operation(
         date(2026, 7, 26),
@@ -93,9 +93,9 @@ async def test_aggregates_and_daily_dates_keep_contract(sqlite_database):
 
 async def test_rhythm_day_queries_exclude_fixed_categories_and_salary(sqlite_database):
     op_date = date(2026, 7, 26)
-    await _insert_expense("100", op_date=op_date, category="Продукты")
+    await _insert_expense("100", op_date=op_date, category="Еда дома")
     await _insert_expense("200", op_date=op_date, category="Жильё")
-    await _insert_expense("300", op_date=op_date, category="Долги")
+    await _insert_expense("300", op_date=op_date, category="Финансовые обязательства")
     await queries.insert_operation(
         op_date,
         "доход",
@@ -169,7 +169,7 @@ async def test_period_aggregates_start_after_balance_anchor_timestamp(sqlite_dat
     )
 
     assert totals["expense"] == Decimal("400.00")
-    assert categories == [{"category": "Продукты", "total": Decimal("400.00")}]
+    assert categories == [{"category": "Еда дома", "total": Decimal("400.00")}]
     assert days == [
         {"op_date": anchor_date, "total": Decimal("300.00")},
         {"op_date": date(2026, 7, 27), "total": Decimal("100.00")},
@@ -282,8 +282,8 @@ async def test_soft_delete_excludes_and_restore_returns_operation(
         "transfer_in": Decimal("0.00"),
         "transfer_out": Decimal("0.00"),
     }
-    assert await queries.find_duplicate(
-        date(2026, 7, 26), Decimal("540"), "расход"
+    assert await queries.find_possible_duplicates(
+        date(2026, 7, 26), Decimal("540"), "расход", "Еда дома"
     ) is None
 
     restored = await queries.restore_operation(op_id)
@@ -314,7 +314,7 @@ async def test_debt_payment_is_idempotent_and_closes_debt(sqlite_database):
         priority=1,
         due_date=None,
     )
-    operation_id = await _insert_expense("100", category="Долги")
+    operation_id = await _insert_expense("100", category="Финансовые обязательства")
 
     first = await queries.record_debt_payment(
         debt["id"], operation_id, date(2026, 7, 26), Decimal("100"),
@@ -360,7 +360,7 @@ async def test_tma_debt_payment_is_atomic_idempotent_and_rejects_overpay(
     assert len(await queries.debt_payment_history(debt["id"])) == 1
     operations = await queries.list_operations(op_date=date(2026, 7, 26))
     assert len(operations) == 1
-    assert operations[0]["category"] == "Долги"
+    assert operations[0]["category"] == "Финансовые обязательства"
 
     with pytest.raises(queries.DebtPaymentError, match="больше остатка"):
         await queries.create_debt_payment(
@@ -422,7 +422,7 @@ async def test_credit_payment_without_body_breakdown_does_not_change_balance(
     assert history[0]["interest_amount"] is None
 
 
-async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
+async def test_credit_metadata_and_early_payment_before_due_advances_schedule(
     sqlite_database,
 ):
     debt = await queries.insert_debt(
@@ -450,7 +450,7 @@ async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
         principal_amount=Decimal("20"),
     )
     assert early is not None
-    assert early["next_payment_date"] == date(2026, 8, 15)
+    assert early["next_payment_date"] == date(2026, 9, 15)
     early_operation = await queries.get_operation(
         (await queries.debt_history(debt["id"]))[0]["operation_id"]
     )
@@ -460,11 +460,11 @@ async def test_credit_metadata_and_early_payment_keep_monthly_schedule(
     assert (await queries.debt_history(debt["id"]))[0]["interest_amount"] == Decimal("0.00")
 
     regular = await queries.create_debt_payment(
-        debt["id"], date(2026, 8, 15), Decimal("40"), "regular-key",
+        debt["id"], date(2026, 9, 15), Decimal("40"), "regular-key",
         principal_amount=Decimal("40"),
     )
     assert regular is not None
-    assert regular["next_payment_date"] == date(2026, 9, 15)
+    assert regular["next_payment_date"] == date(2026, 10, 15)
 
 
 async def test_debt_adjustment_is_history_not_payment_and_archive_is_reversible(
@@ -680,7 +680,7 @@ async def test_remaining_query_surface_and_pragmas(sqlite_database):
         comment="до зарплаты",
         operation_id=None,
     )
-    payment_operation_id = await _insert_expense("25", category="Долги")
+    payment_operation_id = await _insert_expense("25", category="Финансовые обязательства")
     paid = await queries.record_personal_debt_payment(
         personal["id"],
         payment_operation_id,
@@ -1015,7 +1015,9 @@ async def test_subscription_charge_rolls_back_on_date_shift_failure(
     def fail(*_args, **_kwargs):
         raise RuntimeError("сбой сдвига")
 
-    monkeypatch.setattr(queries, "next_charge_after", fail)
+    monkeypatch.setattr(
+        "finance_bot.database.queries.subscriptions.next_charge_after", fail
+    )
     with pytest.raises(RuntimeError, match="сбой сдвига"):
         await queries.charge_subscription(created["id"], confirmed=True)
 
@@ -1039,6 +1041,9 @@ async def test_schema_migration_history_is_recorded(sqlite_database):
         {"version": 6, "name": "weekly_budget"},
         {"version": 7, "name": "nullable_weekly_budget_limits"},
         {"version": 8, "name": "manual_capture_sessions"},
+        {"version": 9, "name": "source_idempotency"},
+        {"version": 10, "name": "balance_snapshots"},
+        {"version": 11, "name": "subscription_billing_day"},
     ]
 
 
@@ -1119,3 +1124,65 @@ async def test_legacy_schema_is_migrated_before_indexes(tmp_path, monkeypatch):
         } <= indexes
     finally:
         await connection.close_pool()
+
+
+async def test_subscription_charge_keeps_billing_day(sqlite_database):
+    created = await queries.insert_subscription(
+        title="Облако",
+        amount=Decimal("199"),
+        period="monthly",
+        next_charge=date(2026, 1, 31),
+        category="Подписки",
+        comment=None,
+    )
+    assert created["billing_day"] == 31
+
+    first = await queries.charge_subscription(created["id"], confirmed=False)
+    assert first["subscription"]["next_charge"] == date(2026, 2, 28)
+    second = await queries.charge_subscription(created["id"], confirmed=False)
+    assert second["subscription"]["next_charge"] == date(2026, 3, 31)
+
+    moved = await queries.patch_subscription(
+        created["id"], {"next_charge": date(2026, 4, 15)}
+    )
+    assert moved["billing_day"] == 15
+
+
+async def test_bot_credit_payment_estimates_principal(sqlite_database):
+    debt = await queries.insert_debt(
+        creditor="Банк",
+        principal=Decimal("120000"),
+        rate=Decimal("12"),
+        min_payment=Decimal("10000"),
+        priority=1,
+        due_date=None,
+    )
+    operation_id = await _insert_expense("10000", category="Финансовые обязательства")
+
+    updated = await queries.record_debt_payment(
+        debt["id"], operation_id, date(2026, 7, 26), Decimal("10000"),
+        estimate_principal=True,
+    )
+    payments = await queries.debt_payment_history(debt["id"])
+
+    assert updated["balance"] == Decimal("111200.00")
+    assert payments[0]["principal_amount"] == Decimal("8800.00")
+
+
+async def test_operation_links_report_debt_payment(sqlite_database):
+    debt = await queries.insert_debt(
+        creditor="Банк",
+        principal=Decimal("1000"),
+        rate=None,
+        min_payment=None,
+        priority=1,
+        due_date=None,
+    )
+    linked = await _insert_expense("100", category="Финансовые обязательства")
+    plain = await _insert_expense("50")
+    await queries.record_debt_payment(
+        debt["id"], linked, date(2026, 7, 26), Decimal("100")
+    )
+
+    assert await queries.operation_links(linked) == ["платёж по кредиту"]
+    assert await queries.operation_links(plain) == []

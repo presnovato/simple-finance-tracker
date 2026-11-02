@@ -1,0 +1,19 @@
+# Конфигурация gitleaks для Finance Tracker.
+#
+# Расширяет встроенный набор правил и добавляет явные правила для токена
+# Telegram-бота и ключа OpenRouter.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "telegram-bot-token"
+description = "Telegram Bot API token"
+regex = '''\b\d{8,10}:AA[A-Za-z0-9_-]{30,}\b'''
+tags = ["key", "telegram"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''\bsk-or-v1-[a-f0-9]{32,}\b'''
+tags = ["key", "openrouter"]

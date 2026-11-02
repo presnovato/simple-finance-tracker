@@ -3,7 +3,7 @@ import { TKProvider } from 'tg-mini-app-uikit'
 import { getCryptoOverviewVisibility } from './api'
 import { isCryptoOverviewVisible, setCryptoOverviewVisible } from './crypto'
 import { haptic } from './telegram'
-import type { HistoryPreset } from './types'
+import type { HistoryPreset, UpcomingFocus } from './types'
 
 const ACCENT = '#77e6b6'
 
@@ -28,11 +28,17 @@ function initialTab(): Tab {
   return tabs.some((tab) => tab.id === requested) ? requested as Tab : 'overview'
 }
 
+function initialHistoryPreset(): HistoryPreset {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('review') === '1' ? { needs_review: true } : {}
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab)
-  const [historyPreset, setHistoryPreset] = useState<HistoryPreset>({})
+  const [historyPreset, setHistoryPreset] = useState<HistoryPreset>(initialHistoryPreset)
   const [presetVersion, setPresetVersion] = useState(0)
   const [cryptoVisible, setCryptoVisible] = useState(() => isCryptoOverviewVisible())
+  const [upcomingFocus, setUpcomingFocus] = useState<UpcomingFocus | null>(null)
 
   useEffect(() => {
     let active = true
@@ -53,7 +59,14 @@ export default function App() {
   const selectTab = (next: Tab) => {
     if (next === 'crypto' && !cryptoVisible) return
     haptic()
+    setUpcomingFocus(null)
     setTab(next)
+  }
+
+  const openUpcoming = (kind: UpcomingFocus['kind'], id: number) => {
+    haptic()
+    setUpcomingFocus({ kind, id, nonce: Date.now() })
+    setTab(kind === 'subscription' ? 'subs' : 'debts')
   }
 
   const openHistory = (preset: HistoryPreset) => {
@@ -69,12 +82,13 @@ export default function App() {
           {tab === 'overview' && (
             <OverviewPage
               openHistory={openHistory}
+              openUpcoming={openUpcoming}
             />
           )}
           {tab === 'history' && <HistoryPage preset={historyPreset} presetVersion={presetVersion} />}
-          {tab === 'debts' && <DebtsPage />}
+          {tab === 'debts' && <DebtsPage focus={upcomingFocus} />}
           {tab === 'crypto' && <CryptoPage onOverviewVisibilityChange={setCryptoVisible} />}
-          {tab === 'subs' && <SubscriptionsPage />}
+          {tab === 'subs' && <SubscriptionsPage focus={upcomingFocus} />}
         </Suspense>
       </div>
 

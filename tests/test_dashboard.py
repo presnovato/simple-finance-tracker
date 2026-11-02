@@ -22,12 +22,12 @@ def test_render_bar():
 
 def test_render_categories_sorted_input():
     rows = [
-        {"category": "Продукты", "total": Decimal(10000)},
-        {"category": "Кафе/Досуг", "total": Decimal(2500)},
+        {"category": "Еда дома", "total": Decimal(10000)},
+        {"category": "Еда вне дома", "total": Decimal(2500)},
     ]
     out = render_categories(rows)
     lines = out.splitlines()
-    assert lines[0].startswith("Продукты")
+    assert lines[0].startswith("Еда дома")
     assert "10 000₽" in lines[0]
     assert "2 500₽" in lines[1]
 

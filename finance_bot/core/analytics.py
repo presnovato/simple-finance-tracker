@@ -5,6 +5,30 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import re
 
+from finance_bot.core.dates import month_bounds
+
+
+def comparison_periods(
+    month_start: date, month_end: date, today: date
+) -> tuple[date, date, date, date]:
+    """Периоды сравнения расходов по категориям (spec 06).
+
+    Для текущего (незакрытого) месяца сравниваем одинаковый номер дня; прошлый
+    период ограничен последним днём прошлого месяца. Для закрытого месяца
+    сравниваем полный месяц с предыдущим полным.
+    """
+    is_current = (month_start.year, month_start.month) == (today.year, today.month)
+    current_end = min(month_end, today) if is_current else month_end
+
+    previous_start, previous_end_full = month_bounds(month_start, offset=-1)
+    if is_current and today.day < previous_end_full.day:
+        previous_end = min(
+            previous_end_full, previous_start + timedelta(days=today.day - 1)
+        )
+    else:
+        previous_end = previous_end_full
+    return month_start, current_end, previous_start, previous_end
+
 
 def parse_month(value: str) -> tuple[date, date]:
     """Преобразует YYYY-MM в границы календарного месяца."""

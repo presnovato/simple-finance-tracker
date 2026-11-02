@@ -42,15 +42,53 @@ export function updateCashBalance(amount: string, anchorDate: string) {
   })
 }
 
-export function createOperation(payload: import('./types').OperationCreatePayload) {
+export function createOperation(
+  payload: import('./types').OperationCreatePayload,
+  idempotencyKey?: string,
+) {
   return api<import('./types').Operation>('/api/operations', {
     method: 'POST',
+    ...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
     body: JSON.stringify(payload),
   })
 }
 
+export interface SubmissionKey {
+  key: string
+  payload: string
+}
+
+/**
+ * Ключ идемпотентности отправки: новый для нового payload и тот же самый
+ * при повторной попытке с тем же payload (таймаут сети, повторный тап).
+ */
+export function submissionKey(
+  previous: SubmissionKey | null,
+  payload: unknown,
+): SubmissionKey {
+  const serialized = JSON.stringify(payload)
+  if (previous && previous.payload === serialized) return previous
+  return { key: requestKey(), payload: serialized }
+}
+
 export function getBudget(weekStart?: string): Promise<BudgetResponse> {
   return api<BudgetResponse>(`/api/budget${queryString({ week_start: weekStart })}`)
+}
+
+export function getUpcoming(): Promise<import('./types').UpcomingResponse> {
+  return api<import('./types').UpcomingResponse>('/api/upcoming')
+}
+
+export function getCategoryComparison(month: string) {
+  return api<import('./types').CategoryComparisonResponse>(
+    `/api/analytics/categories${queryString({ month })}`,
+  )
+}
+
+export function getBalanceHistory(dateFrom: string, dateTo: string) {
+  return api<import('./types').BalanceHistoryResponse>(
+    `/api/balance/history${queryString({ date_from: dateFrom, date_to: dateTo })}`,
+  )
 }
 
 export function getBudgetSettings(): Promise<BudgetSettings> {
@@ -170,7 +208,7 @@ export function listPersonalDebtHistory(id: number) {
   )
 }
 
-function requestKey(): string {
+export function requestKey(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }

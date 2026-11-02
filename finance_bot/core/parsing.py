@@ -11,7 +11,13 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from finance_bot.config import OPERATION_TYPES
+from finance_bot.config import (
+    EXPENSE_CATEGORIES,
+    INCOME_CATEGORIES,
+    LARGE_AMOUNT_REVIEW_THRESHOLD,
+    MAX_ABS_AMOUNT,
+    OPERATION_TYPES,
+)
 from finance_bot.core.subscriptions import next_charge_after
 
 FALLBACK = {
@@ -26,14 +32,23 @@ def parse_amount(value) -> Decimal | None:
     if value is None:
         return None
     if isinstance(value, (int, float, Decimal)):
-        return Decimal(str(value))
-    text = str(value)
-    text = re.sub(r"[₽рp\.руб\s ]+$", "", text.strip(), flags=re.IGNORECASE)
-    text = text.replace(" ", "").replace(" ", "").replace(",", ".")
-    try:
-        return Decimal(text)
-    except InvalidOperation:
+        amount = Decimal(str(value))
+    else:
+        text = str(value)
+        text = re.sub(r"[₽рp\.руб\s\u00a0\u202f]+$", "", text.strip(), flags=re.IGNORECASE)
+        text = (
+            text.replace("\u00a0", "")
+            .replace("\u202f", "")
+            .replace(" ", "")
+            .replace(",", ".")
+        )
+        try:
+            amount = Decimal(text)
+        except InvalidOperation:
+            return None
+    if not amount.is_finite() or abs(amount) >= MAX_ABS_AMOUNT:
         return None
+    return amount
 
 
 def parse_quick_amount(text: str) -> Decimal | None:
@@ -163,6 +178,8 @@ def _parse_subscription(data: dict, default_date: date) -> dict | None:
     raw_period = _text_value(data.get("period"))
     period = raw_period.lower() if raw_period else "monthly"
     needs_review = bool(data.get("needs_review"))
+    if amount > LARGE_AMOUNT_REVIEW_THRESHOLD:
+        needs_review = True
     used_default = raw_period is None
     if period not in {"monthly", "yearly"}:
         period = "monthly"
@@ -188,6 +205,27 @@ def _parse_subscription(data: dict, default_date: date) -> dict | None:
     }
 
 
+def _normalise_category(
+    value: str | None, type_: str | None
+) -> tuple[str | None, bool, str | None]:
+    """Приводит категорию модели к допустимой, не теряя неизвестную.
+
+    Возвращает (категория, needs_review, исходное_значение_модели).
+    """
+    if value is None:
+        return None, False, None
+    if type_ == "перевод":
+        return None, False, None
+    allowed = INCOME_CATEGORIES if type_ == "доход" else EXPENSE_CATEGORIES
+    normalized = " ".join(value.casefold().split())
+    lookup = {name.casefold(): name for name in allowed}
+    canonical = lookup.get(normalized)
+    if canonical is not None:
+        return canonical, False, None
+    fallback = None if type_ == "доход" else "Прочее"
+    return fallback, True, value
+
+
 def _parse_one(
     data: dict, default_date: date, *, allow_subscription: bool = True
 ) -> dict:
@@ -204,12 +242,22 @@ def _parse_one(
     type_ = _scalar(data.get("type"))
     type_ = str(type_).strip().lower() if type_ else None
     amount = parse_amount(_scalar(data.get("amount")))
-    category = _scalar(data.get("category"))
-    category = str(category).strip() if category else None
+    raw_category = _scalar(data.get("category"))
+    raw_category = str(raw_category).strip() if raw_category else None
+    category, category_review, model_category = _normalise_category(
+        raw_category, type_
+    )
     direction = _scalar(data.get("transfer_direction"))
     direction = str(direction).strip().lower() if direction else None
     if direction not in {"in", "out", "self"}:
         direction = None
+
+    comment = (str(_scalar(data.get("comment"))).strip()
+               if data.get("comment") else None)
+    if model_category:
+        # Категория модели неизвестна — сохраняем её в комментарии.
+        suffix = f"(категория модели: {model_category})"
+        comment = f"{comment} {suffix}" if comment else suffix
 
     result = {
         "intent": "operation",
@@ -217,17 +265,25 @@ def _parse_one(
         "type": type_,
         "amount": amount,
         "category": category,
-        "comment": (str(_scalar(data.get("comment"))).strip()
-                    if data.get("comment") else None),
+        "comment": comment,
         "account": (str(_scalar(data.get("account"))).strip().lower()
                     if data.get("account") else None),
         "transfer_direction": direction,
-        "needs_review": bool(data.get("needs_review")) or date_needs_review,
+        "needs_review": (
+            bool(data.get("needs_review"))
+            or date_needs_review
+            or category_review
+        ),
     }
 
     # needs_review пересчитывается в коде, модели не доверяем
     if result["amount"] is None or result["amount"] <= 0 \
             or result["type"] not in OPERATION_TYPES:
+        result["needs_review"] = True
+    if (
+        result["amount"] is not None
+        and result["amount"] > LARGE_AMOUNT_REVIEW_THRESHOLD
+    ):
         result["needs_review"] = True
     if result["type"] == "перевод":
         result["category"] = None

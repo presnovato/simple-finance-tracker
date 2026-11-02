@@ -21,7 +21,9 @@ async def create_operation(
     """Создаёт операцию и возвращает её публичную строку и дубль, если он есть."""
     duplicate_id = None
     if check_duplicate:
-        duplicate_id = await queries.find_duplicate(op_date, amount, type_)
+        duplicate_id = await queries.find_possible_duplicates(
+            op_date, amount, type_, category
+        )
 
     operation_id = await queries.insert_operation(
         op_date=op_date,

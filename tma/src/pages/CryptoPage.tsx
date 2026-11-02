@@ -9,11 +9,11 @@ import {
   TKNoticeBar,
   TKSelect,
   TKSheet,
-  TKSpinner,
 } from 'tg-mini-app-uikit'
 
 import { api, updateCryptoOverviewVisibility } from '../api'
 import { ConfirmSheet } from '../components/ConfirmSheet'
+import { PageError, PageLoading } from '../components/PageState'
 import { formatCryptoQuantity, isCryptoOverviewVisible, setCryptoOverviewVisible } from '../crypto'
 import { formatDay, formatMoney } from '../format'
 import { haptic } from '../telegram'
@@ -112,9 +112,10 @@ export function CryptoPage({ onOverviewVisibilityChange }: Props) {
         </div>
       </header>
 
-      {error && <TKNoticeBar tone="red">{error}</TKNoticeBar>}
+      {error && data && <TKNoticeBar tone="red">{error}</TKNoticeBar>}
+      {error && !data && <PageError message={error} onRetry={() => void load()} />}
       {loading && !data ? (
-        <div className="debts-loader"><TKSpinner label="Собираю криптоактивы" /></div>
+        <PageLoading label="Собираю криптоактивы" />
       ) : data && (
         <>
           <section className="crypto-section" aria-labelledby="crypto-holdings-heading">

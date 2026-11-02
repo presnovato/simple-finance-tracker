@@ -195,6 +195,30 @@ def _threshold_text(report: dict, events: list[str]) -> str:
     )
 
 
+def weekly_reference_line(report: dict, today: date) -> str | None:
+    """Справочная строка об остатке недели для вечернего отчёта (spec 03).
+
+    Показывает фактический остаток недельного лимита без дневного среднего,
+    нормы трат или предположения о равномерном расходовании.
+    """
+    overall = report.get("overall")
+    if overall is None:
+        return None
+    remaining = overall["remaining"]
+    days_left = (report["week_end"] - today).days
+
+    if days_left <= 0:
+        if remaining < 0:
+            return f"Итог недели: перерасход {fmt_amount(abs(remaining))}"
+        return f"Итог недели: остаток {fmt_amount(remaining)}"
+
+    if remaining < 0:
+        return f"Перерасход недельного бюджета: {fmt_amount(abs(remaining))}."
+    if remaining == 0:
+        return "Недельный лимит исчерпан."
+    return f"Остаток недельного бюджета: {fmt_amount(remaining)}."
+
+
 async def evening_budget_lines(today: date) -> list[str]:
     report = await get_budget(today=today)
     if not report.get("configured"):
@@ -203,6 +227,10 @@ async def evening_budget_lines(today: date) -> list[str]:
     events = await _claim_thresholds(report)
     if events:
         lines.append(_threshold_text(report, events))
+
+    reference = weekly_reference_line(report, today)
+    if reference:
+        lines.append(reference)
 
     overall = report.get("overall")
     if (

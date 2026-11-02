@@ -456,3 +456,39 @@ button { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; }
 }
+
+.page-state--error { display: grid; gap: 10px; justify-items: center; padding: 18px 0; }
+.overview-review-card, .upcoming-payments-card, .analytics-card { margin-bottom: 18px; }
+.upcoming-payments-list { display: grid; gap: 4px; margin-top: 12px; }
+.upcoming-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(255, 127, 142, .16);
+  color: var(--red, #ff7f8e);
+  font-size: 11px;
+}
+.analytics-content { display: grid; gap: 18px; margin-top: 16px; }
+.analytics-section { display: grid; gap: 10px; }
+.analytics-section h3 { margin: 0; font-size: 14px; }
+.analytics-hint { margin: 0; color: var(--tk-text-2); font-size: 11px; line-height: 1.5; }
+.analytics-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.analytics-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.analytics-row-values { display: grid; justify-items: end; gap: 2px; }
+.analytics-row-values span { color: var(--tk-text-2); font-size: 11px; }
+.analytics-row-change { grid-column: 1 / -1; color: var(--tk-text-2); font-size: 12px; }
+.analytics-row-change.positive { color: var(--green); }
+.analytics-row-change.negative { color: var(--red, #ff7f8e); }
+.analytics-chart { overflow: hidden; border-radius: 14px; background: var(--tk-surface-2); }
+.debt-highlight { outline: 2px solid var(--tk-accent, #77e6b6); outline-offset: 3px; border-radius: 20px; transition: outline-color .3s ease; }

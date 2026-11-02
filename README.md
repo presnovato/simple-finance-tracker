@@ -4,7 +4,7 @@ Owner-only Telegram-бот и Telegram Mini App для личного учёта
 Данные хранятся в SQLite, а интерфейс TMA объединяет обзор, историю, долги,
 криптоактивы и подписки.
 
-**Статус:** 1.0.0 — Stable Release
+**Статус:** 1.1.0
 **Лицензия:** [MIT](LICENSE)
 
 ## Возможности
@@ -25,8 +25,10 @@ Owner-only Telegram-бот и Telegram Mini App для личного учёта
 - `tma/` — React 19, TypeScript, Vite, `tg-mini-app-uikit`, Recharts.
 - `finance_bot/api/` — owner-only API с проверкой Telegram `initData`.
 - `tma/dist/` — production bundle, который раздаёт aiohttp-сервер.
-- `tools/mock_api_server.py` и Docker mock-профиль — безопасный локальный просмотр TMA
-  без Telegram и внешнего API.
+- `/api/integrations/finance/*` — owner-only read-only маршруты для локального
+  Finance MCP (`finance_mcp/`).
+- Docker mock-профиль (`tools/mock_tma_server.py` + `tools/seed_mock_database.py`) —
+  безопасный локальный просмотр TMA на настоящем API и mock-базе без Telegram.
 
 ## Быстрый старт
 
@@ -45,11 +47,70 @@ python -m finance_bot.main
 `DB_REQUIRE_PERSISTENT_DIR=0`. `OPENROUTER_API_KEY` нужен только для AI-захвата;
 ручной сценарий `/manual` от него не зависит.
 
+> ⚠️ Не запускай локальную копию с production-токеном. Два поллера на одном
+> токене конфликтуют (`TelegramConflictError`), и апдейты случайно делятся
+> между ними. Заведи отдельного dev-бота в @BotFather, используй его токен и
+> локальный `DB_PATH`. В логе при старте видно, к какому боту подключился
+> процесс: `Бот @<username> (id=<id>) запущен`.
+
 Основные команды Telegram-бота:
 
 - `/start` — справка и запуск;
 - `/manual` — пошаговый ввод операции без ИИ;
-- `/dashboard` — сводка и ссылка на TMA.
+- `/dashboard` — сводка и ссылка на TMA;
+- `/budget` — статус недельного бюджета;
+- `/balance` — деньги на руках; `/balance 15000` — задать новый якорь;
+- `/list` (или `/список`) — разобрать следующий скриншот как список трат за день;
+- `/note текст` — заметка к операции (ответом на подтверждение);
+- `/export` — выгрузить операции или копию базы;
+- `/backup` — получить копию базы за нужный день;
+- `/remind 21:30` — время вечернего пинга;
+- `/cancel` — отменить ручной ввод.
+
+Меню «/» регистрируется ботом на старте (`set_my_commands`) только для чата владельца.
+
+## Read-only MCP
+
+В `finance_mcp/` находится локальный STDIO-коннектор для Codex. Он предоставляет
+недельные агрегаты, текущий денежный и долговой снимок и страницу операций с
+фильтрами; STDIO поддерживает актуальный protocol discovery и legacy `initialize`
+handshake. Операционные и TMA write-маршруты коннектору не открыты.
+
+Для включения API задай на сервисе переменную `FINANCE_AGENT_TOKEN` отдельным
+случайным секретом; не используй `BOT_TOKEN`. В Codex настрой локальный сервер
+`finance_mcp` с `FINANCE_API_URL=https://<домен>` и передай токен через
+`env_vars = ["FINANCE_AGENT_TOKEN"]`. Не добавляй значение токена в Git или
+файл проекта. Вне локальной разработки коннектор требует HTTPS.
+
+Пример записи в пользовательском `config.toml` после публикации API:
+
+```toml
+[mcp_servers.finance_tracker]
+command = "C:\\Python313\\python.exe"
+args = ["-m", "finance_mcp"]
+cwd = 'D:\~ Quantified Self Project\Finance Tracker\Finance-Tracker-public-snapshot'
+enabled = true
+enabled_tools = [
+  "finance_get_week",
+  "finance_get_snapshot",
+  "finance_list_operations",
+]
+env_vars = ["FINANCE_AGENT_TOKEN"]
+
+[mcp_servers.finance_tracker.env]
+FINANCE_API_URL = "https://<домен-Railway>"
+```
+
+`FINANCE_AGENT_TOKEN` нужно задать в окружении пользователя, из которого Codex
+запускает MCP. Значение должно совпадать с серверной переменной. До публикации
+API и проверки реальной недели эту запись не включать.
+
+Поддерживаются только `GET /api/integrations/finance/week`,
+`GET /api/integrations/finance/snapshot` и
+`GET /api/integrations/finance/operations`. Финансовый snapshot относится к
+текущему состоянию; исторические остатки и отдельные остатки по счетам в базе
+не хранятся. Вызов `/api/budget` из интеграции намеренно не используется,
+потому что чтение текущего бюджета может создать недельный снимок.
 
 ## Проверки
 
@@ -103,6 +164,74 @@ docker compose -f docker-compose.mock.yml up --build
 Затем открой [http://localhost:8080](http://localhost:8080). Это development-only
 профиль с отключённой авторизацией; не публикуй его наружу.
 
+Гарантии mock-профиля:
+
+- порт публикуется только на `127.0.0.1` — с других машин в сети он недоступен;
+- оба контейнера запускаются с `FINANCE_TRACKER_MOCK=1`, а
+  `tools/mock_tma_server.py` и `tools/seed_mock_database.py` откажутся работать
+  без этой переменной, при наличии переменных Railway или с настоящим
+  `BOT_TOKEN`;
+- сервер раздаёт только базу, помеченную `settings.mock_database=1`, а
+  `MOCK_RESET=1` не удалит файл без этой метки;
+- внутри контейнера сервер слушает `MOCK_BIND_HOST=0.0.0.0` (нужно для
+  проброса порта Docker), локально по умолчанию — `127.0.0.1`.
+
+> ⚠️ Никогда не запускай скрипты из `tools/` с production-`.env`: mock-инструменты
+> работают только с отдельной mock-базой.
+
+## Резервные копии и восстановление
+
+Каждую ночь (по умолчанию в `BACKUP_HOUR=4` по `TIMEZONE`) бот молча сохраняет
+на сервере сжатую копию базы `finance_backup_ГГГГ-ММ-ДД.db.gz` в `BACKUP_DIR`
+(по умолчанию `<папка DB_PATH>/backups/daily`, на Railway — `/data/backups/daily`
+внутри Volume). В чат при этом ничего не приходит: файл отдаётся только по
+запросу. Хранятся последние `BACKUP_RETENTION_DAYS` дней (по умолчанию 7).
+Если бот был выключен в момент запуска задачи, пропущенный бэкап догоняется
+примерно через минуту после старта. Перед каждой новой миграцией схемы рядом
+с базой сохраняется снимок `<db_dir>/backups/pre-migration-v<N>-<UTC>.db`
+(хранятся три последних).
+
+### Команды
+
+- `/backup` — копия за сегодня;
+- `/backup вчера` — за вчера; дату можно задать явно: `/backup 22.09`,
+  `/backup 22.09.2026`, `/backup 2026-09-22`;
+- `/backup список` — все сохранённые копии с датами, размером и числом операций;
+- `/backup сейчас` — создать свежую копию прямо сейчас и получить её.
+
+Если за запрошенный день копии нет, бот присылает ближайшую (сначала более
+раннюю) и пишет об этом в подписи.
+
+> ⚠️ Ограничение: копии лежат на том же Railway Volume, что и база. Они защищают
+> от неудачных миграций, багов и случайных удалений, но не от потери Volume или
+> всего проекта Railway. Чтобы иметь копию вне сервера, периодически забирай её
+> командой `/backup`.
+
+### Локальное восстановление
+
+```bash
+gunzip finance_backup_2026-09-24.db.gz
+sqlite3 finance.db "PRAGMA integrity_check"   # должно вывести ok
+DB_PATH=./finance.db DB_REQUIRE_PERSISTENT_DIR=0 python -m finance_bot.main
+```
+
+### Восстановление на Railway
+
+Файл можно положить на Volume через Railway CLI (`railway volume files`).
+Останови сервис перед заменой базы, чтобы не было двух писателей и лишнего WAL:
+
+```bash
+gunzip finance_backup_2026-09-24.db.gz
+sqlite3 finance.db "PRAGMA integrity_check"
+railway volume files --volume <volume> list /
+railway volume files --volume <volume> upload ./finance.db /finance.db --overwrite
+```
+
+Если в списке остались `finance.db-wal` или `finance.db-shm` от старой базы,
+удали их через `railway volume browse /` (или `railway volume files delete`),
+затем запусти сервис заново. После старта проверь `/health` и что в «Истории»
+видны последние операции.
+
 ## Документация и участие
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — локальная настройка и правила изменений;
@@ -111,7 +240,7 @@ docker compose -f docker-compose.mock.yml up --build
 
 ## Деплой
 
-GitHub → Railway (auto-deploy), web process задаётся в `Procfile`, Railway Volume
+GitHub (`developer`) → Railway (auto-deploy после зелёного CI), web process задаётся в `Procfile`, Railway Volume
 монтируется в `/data`. Для production нужны `DB_PATH=/data/finance.db` и
 `TMA_URL` с публичным HTTPS-доменом Railway; `PORT` подставляет Railway.
 Секреты хранятся только в variables Railway и локальном `.env`.

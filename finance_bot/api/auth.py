@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl
 
 from aiohttp import web
 
-from finance_bot.config import ALLOWED_USER_ID, BOT_TOKEN
+from finance_bot.config import ALLOWED_USER_ID, BOT_TOKEN, FINANCE_AGENT_TOKEN
 
 
 class AuthError(ValueError):
@@ -79,6 +79,22 @@ def _credential(request: web.Request) -> str:
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     if not request.path.startswith("/api/"):
+        return await handler(request)
+    if request.path.startswith("/api/integrations/finance/"):
+        if not FINANCE_AGENT_TOKEN:
+            return web.json_response(
+                {"error": "integration_not_configured"}, status=503
+            )
+        authorization = request.headers.get("Authorization", "")
+        scheme, _, credential = authorization.partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or not credential
+            or not hmac.compare_digest(credential.strip(), FINANCE_AGENT_TOKEN)
+        ):
+            return web.json_response({"error": "invalid_agent_token"}, status=401)
+        # Владелец задаётся конфигурацией приложения; клиент не может выбрать user_id.
+        request["auth_user"] = {"id": ALLOWED_USER_ID}
         return await handler(request)
     authenticator = request.app[AUTHENTICATOR_KEY]
     try:

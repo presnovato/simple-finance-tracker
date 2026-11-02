@@ -1,0 +1,15 @@
+# Единые переводы строк: LF и в репозитории, и в рабочей копии (спека 08).
+* text=auto eol=lf
+
+# Бинарные файлы не нормализуем.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary

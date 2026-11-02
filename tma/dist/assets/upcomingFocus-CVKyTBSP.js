@@ -1,0 +1,1 @@
+function e(e,t,n,r,i){return!e||e.kind!==t||e.nonce===n?{status:`ignore`}:r?i.includes(e.id)?{status:`open`,focus:e}:{status:`missing`,focus:e}:{status:`wait`}}export{e as t};

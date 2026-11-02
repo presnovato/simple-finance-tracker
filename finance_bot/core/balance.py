@@ -3,8 +3,9 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from finance_bot.config import MAX_ABS_AMOUNT
+
 MONEY_STEP = Decimal("0.01")
-MAX_ABS_AMOUNT = Decimal("10000000000")
 
 
 def parse_anchor_amount(value: str) -> Decimal:

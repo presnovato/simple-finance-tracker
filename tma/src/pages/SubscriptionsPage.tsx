@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   TKButton,
   TKCard,
@@ -10,7 +10,6 @@ import {
   TKNoticeBar,
   TKSegmented,
   TKSheet,
-  TKSpinner,
   TKTextarea,
 } from 'tg-mini-app-uikit'
 
@@ -22,6 +21,7 @@ import {
   patchSubscription,
 } from '../api'
 import { ConfirmSheet } from '../components/ConfirmSheet'
+import { PageError, PageLoading } from '../components/PageState'
 import { formatDay, formatMoney } from '../format'
 import { haptic } from '../telegram'
 import type {
@@ -29,9 +29,11 @@ import type {
   SubscriptionPeriod,
   SubscriptionsResponse,
   UpcomingCharge,
+  UpcomingFocus,
 } from '../types'
+import { resolveUpcomingFocus } from './upcomingFocus'
 
-export function SubscriptionsPage() {
+export function SubscriptionsPage({ focus }: { focus?: UpcomingFocus | null }) {
   const [data, setData] = useState<SubscriptionsResponse | null>(null)
   const [archive, setArchive] = useState<Subscription[]>([])
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -58,6 +60,27 @@ export function SubscriptionsPage() {
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  const handledFocus = useRef(0)
+  useEffect(() => {
+    const resolution = resolveUpcomingFocus(
+      focus,
+      'subscription',
+      handledFocus.current,
+      !loading && Boolean(data),
+      (data?.items ?? []).map((item) => item.id),
+    )
+    if (resolution.status === 'ignore' || resolution.status === 'wait') return
+    handledFocus.current = resolution.focus.nonce
+    if (resolution.status === 'missing') {
+      setError('Подписка недоступна')
+      return
+    }
+    const target = data?.items.find((item) => item.id === resolution.focus.id)
+    if (!target) return
+    setEditing(target)
+    setSheetOpen(true)
+  }, [focus, loading, data])
 
   const active = useMemo(
     () => [...(data?.items ?? [])].sort((a, b) => a.next_charge.localeCompare(b.next_charge)),
@@ -156,7 +179,18 @@ export function SubscriptionsPage() {
   }
 
   if (loading && !data) {
-    return <div className="page-state"><TKSpinner label="Загружаю подписки" /></div>
+    return (
+      <div className="page subscriptions-page">
+        <PageLoading label="Загружаю подписки" />
+      </div>
+    )
+  }
+  if (error && !data) {
+    return (
+      <div className="page subscriptions-page">
+        <PageError message={error} onRetry={() => void load()} />
+      </div>
+    )
   }
 
   return (
